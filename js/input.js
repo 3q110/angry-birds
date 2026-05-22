@@ -4,6 +4,31 @@ class InputManager {
     this.touchX = 0
     this.touchY = 0
 
+    canvas.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      this.touchActive = true
+      this.touchX = e.clientX
+      this.touchY = e.clientY
+    })
+
+    canvas.addEventListener('mousemove', (e) => {
+      e.preventDefault()
+      if (this.touchActive) {
+        this.touchX = e.clientX
+        this.touchY = e.clientY
+      }
+    })
+
+    canvas.addEventListener('mouseup', (e) => {
+      e.preventDefault()
+      this.touchActive = false
+    })
+
+    canvas.addEventListener('mouseleave', (e) => {
+      e.preventDefault()
+      this.touchActive = false
+    })
+
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault()
       const touch = e.touches[0]
