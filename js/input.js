@@ -1,5 +1,8 @@
 class InputManager {
-  constructor(canvas) {
+  constructor(canvas, logicalWidth, logicalHeight) {
+    this.canvas = canvas
+    this.logicalWidth = logicalWidth
+    this.logicalHeight = logicalHeight
     this.touchActive = false
     this.touchX = 0
     this.touchY = 0
@@ -7,15 +10,13 @@ class InputManager {
     canvas.addEventListener('mousedown', (e) => {
       e.preventDefault()
       this.touchActive = true
-      this.touchX = e.clientX
-      this.touchY = e.clientY
+      this.updatePosition(e.clientX, e.clientY)
     })
 
     canvas.addEventListener('mousemove', (e) => {
       e.preventDefault()
       if (this.touchActive) {
-        this.touchX = e.clientX
-        this.touchY = e.clientY
+        this.updatePosition(e.clientX, e.clientY)
       }
     })
 
@@ -33,15 +34,13 @@ class InputManager {
       e.preventDefault()
       const touch = e.touches[0]
       this.touchActive = true
-      this.touchX = touch.clientX
-      this.touchY = touch.clientY
+      this.updatePosition(touch.clientX, touch.clientY)
     })
 
     canvas.addEventListener('touchmove', (e) => {
       e.preventDefault()
       const touch = e.touches[0]
-      this.touchX = touch.clientX
-      this.touchY = touch.clientY
+      this.updatePosition(touch.clientX, touch.clientY)
     })
 
     canvas.addEventListener('touchend', (e) => {
@@ -53,6 +52,15 @@ class InputManager {
       e.preventDefault()
       this.touchActive = false
     })
+  }
+
+  updatePosition(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect()
+    // 将 CSS 像素坐标映射到 Canvas 逻辑像素坐标
+    const scaleX = this.logicalWidth / rect.width
+    const scaleY = this.logicalHeight / rect.height
+    this.touchX = (clientX - rect.left) * scaleX
+    this.touchY = (clientY - rect.top) * scaleY
   }
 
   getTouch() {

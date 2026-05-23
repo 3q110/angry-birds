@@ -10,37 +10,82 @@
       padding: 0;
       box-sizing: border-box;
     }
-    body {
-      background: #1a1a2e;
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #1a1a2e 0%, #2d3436 100%);
       display: flex;
       justify-content: center;
       align-items: center;
-      min-height: 100vh;
       font-family: 'Arial', sans-serif;
       overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
     }
     #gameContainer {
       position: relative;
-      border: 3px solid #333;
-      border-radius: 8px;
-      box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+      border: 4px solid #2c3e50;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(52, 152, 219, 0.2);
     }
     canvas {
       display: block;
       cursor: default;
+      touch-action: none;
+      border-radius: 8px;
     }
     #instructions {
       position: absolute;
       top: 10px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.85);
       color: white;
-      padding: 8px 16px;
-      border-radius: 20px;
-      font-size: 14px;
+      padding: 10px 20px;
+      border-radius: 25px;
+      font-size: 15px;
       pointer-events: none;
       z-index: 10;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+    #buttonContainer {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+    }
+    .gameButton {
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: bold;
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+    }
+    .gameButton:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
+    }
+    .gameButton:active {
+      transform: translateY(0);
+    }
+    #restartBtn {
+      background: linear-gradient(135deg, #e74c3c, #c0392b);
+      color: white;
+    }
+    #prevBtn {
+      background: linear-gradient(135deg, #f39c12, #e67e22);
+      color: white;
+    }
+    #nextBtn {
+      background: linear-gradient(135deg, #2ecc71, #27ae60);
+      color: white;
     }
   </style>
 </head>
@@ -48,6 +93,11 @@
   <div id="gameContainer">
     <canvas id="gameCanvas"></canvas>
     <div id="instructions">拖拽小鸟瞄准，松开发射！</div>
+    <div id="buttonContainer">
+      <button id="restartBtn" class="gameButton">🔄 重新开始</button>
+      <button id="prevBtn" class="gameButton">⬅️ 上一关</button>
+      <button id="nextBtn" class="gameButton">➡️ 下一关</button>
+    </div>
   </div>
   <script type="module" src="js/main-browser.js"></script>
 </body>

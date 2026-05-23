@@ -46,10 +46,15 @@ class Physics {
     })
   }
 
-  isSettled(bird, blocks, pigs) {
+  isSettled(bird, blocks, pigs, groundY) {
+    // 小鸟必须已经落地（速度很低且接近地面）才能进入沉降阶段
+    // 防止小鸟在抛物线顶点（速度接近0）时被误判为已沉降
     if (bird && bird.used) {
-      if (Math.abs(bird.vx) > this.settleThreshold ||
-          Math.abs(bird.vy) > this.settleThreshold) return false
+      const speed = Math.sqrt(bird.vx * bird.vx + bird.vy * bird.vy)
+      // 小鸟速度仍然较大，或仍在空中较高位置（离地面超过80像素）
+      if (speed > this.settleThreshold * 3) return false
+      const heightAboveGround = groundY - bird.y
+      if (heightAboveGround > 80) return false
     }
     for (let b of blocks) {
       if (b.hp > 0 && (Math.abs(b.vx) > this.settleThreshold ||
@@ -68,6 +73,12 @@ class Physics {
       b.vy += this.gravity
       b.x += b.vx
       b.y += b.vy
+      // 地面碰撞：防止方块在沉降阶段穿地
+      if (b.y + b.h >= groundY) {
+        b.y = groundY - b.h
+        b.vy = 0
+        b.vx *= 0.3
+      }
       b.vx *= 0.5
       b.vy *= 0.5
     })
@@ -76,6 +87,12 @@ class Physics {
       p.vy += this.gravity
       p.x += p.vx
       p.y += p.vy
+      // 地面碰撞：防止小猪在沉降阶段穿地
+      if (p.y + p.radius >= groundY) {
+        p.y = groundY - p.radius
+        p.vy = 0
+        p.vx *= 0.3
+      }
       p.vx *= 0.5
       p.vy *= 0.5
     })

@@ -17,7 +17,40 @@ const screenHeight = 600
 canvas.width = screenWidth
 canvas.height = screenHeight
 
-const inputManager = new InputManager(canvas)
+// 屏幕适配：自动缩放 Canvas 以适配各种屏幕尺寸
+function resizeCanvas() {
+  const container = document.getElementById('gameContainer')
+  const targetRatio = screenWidth / screenHeight
+  const windowRatio = window.innerWidth / window.innerHeight
+
+  let displayWidth, displayHeight
+
+  if (windowRatio > targetRatio) {
+    // 窗口比游戏更宽，以高度为准
+    displayHeight = window.innerHeight
+    displayWidth = displayHeight * targetRatio
+  } else {
+    // 窗口比游戏更窄，以宽度为准
+    displayWidth = window.innerWidth
+    displayHeight = displayWidth / targetRatio
+  }
+
+  // 留一点边距
+  const margin = 4
+  displayWidth = Math.min(displayWidth, window.innerWidth - margin)
+  displayHeight = Math.min(displayHeight, window.innerHeight - margin)
+
+  canvas.style.width = displayWidth + 'px'
+  canvas.style.height = displayHeight + 'px'
+  container.style.width = displayWidth + 'px'
+  container.style.height = displayHeight + 'px'
+}
+
+// 初始缩放 + 监听窗口变化
+resizeCanvas()
+window.addEventListener('resize', resizeCanvas)
+
+const inputManager = new InputManager(canvas, screenWidth, screenHeight)
 
 let slingshot
 let birds = []
@@ -29,8 +62,42 @@ let gameState = 'aiming'
 let score = 0
 let levelIndex = 0
 let sceneManager
+let canDrag = false
+let lastScoredPigs = 0
+let lastScoredBlocks = 0
+let winLoseTimeout = null
 
+const physics = new Physics(screenWidth, screenHeight)
 const groundY = screenHeight - 60
+CollisionDetection.init(screenWidth)
+
+// 按钮事件监听
+const restartBtn = document.getElementById('restartBtn')
+const prevBtn = document.getElementById('prevBtn')
+const nextBtn = document.getElementById('nextBtn')
+
+restartBtn.addEventListener('click', () => {
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
+  init()
+})
+
+prevBtn.addEventListener('click', () => {
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
+  levelIndex--
+  if (levelIndex < 0) {
+    levelIndex = LevelManager.getTotalLevels() - 1
+  }
+  init()
+})
+
+nextBtn.addEventListener('click', () => {
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
+  levelIndex++
+  if (levelIndex >= LevelManager.getTotalLevels()) {
+    levelIndex = 0
+  }
+  init()
+})
 
 function init() {
   const levelData = LevelManager.getLevel(levelIndex)
@@ -58,65 +125,115 @@ function init() {
   physics.reset()
 
   score = 0
+  lastScoredPigs = 0
+  lastScoredBlocks = 0
+  canDrag = false
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
 }
 
 function update() {
   if (gameState === 'aiming') {
     const touch = inputManager.getTouch()
-    if (touch.active) {
+    
+    if (touch.active && !currentBird.pulling && !canDrag) {
+      // 检测是否点击到了小鸟
+      const dx = touch.x - currentBird.x
+      const dy = touch.y - currentBird.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (dist < currentBird.radius * 3) {
+        canDrag = true
+      }
+    }
+    
+    if (touch.active && canDrag) {
       const dx = touch.x - slingshot.x
       const dy = touch.y - slingshot.y
       const dist = Math.sqrt(dx * dx + dy * dy)
-      const maxPull = 80
-
-      if (dist < maxPull) {
-        currentBird.x = touch.x
-        currentBird.y = touch.y
-      } else {
-        const angle = Math.atan2(dy, dx)
-        currentBird.x = slingshot.x + Math.cos(angle) * maxPull
-        currentBird.y = slingshot.y + Math.sin(angle) * maxPull
+      const maxPull = 100
+      
+      let targetX = touch.x
+      let targetY = touch.y
+      
+      // 允许向后拉，但限制小鸟不能拉到弹弓右侧太远
+      if (targetX > slingshot.x + 30) {
+        targetX = slingshot.x + 30
       }
+      
+      const finalDx = targetX - slingshot.x
+      const finalDy = targetY - slingshot.y
+      const finalDist = Math.sqrt(finalDx * finalDx + finalDy * finalDy)
+      
+      if (finalDist > maxPull) {
+        const angle = Math.atan2(finalDy, finalDx)
+        targetX = slingshot.x + Math.cos(angle) * maxPull
+        targetY = slingshot.y + Math.sin(angle) * maxPull
+      }
+      
+      currentBird.x = targetX
+      currentBird.y = targetY
       currentBird.pulling = true
-    } else if (currentBird.pulling) {
+    } else if (!touch.active && canDrag) {
+      // 松手：发射小鸟
       launchBird()
+      canDrag = false
+      currentBird.pulling = false
     }
   }
 
   if (gameState === 'flying' && launched) {
-    physics.update(currentBird, blocks, pigs, groundY)
+      // 小鸟飞出屏幕边界，直接进入沉降阶段
+      if (currentBird.x > screenWidth + 100 || currentBird.x < -100 ||
+          currentBird.y > screenHeight + 100) {
+        gameState = 'settling'
+      } else {
+        physics.update(currentBird, blocks, pigs, groundY)
 
-    CollisionDetection.checkBirdWithGround(currentBird, groundY)
-    CollisionDetection.checkBirdWithBlocks(currentBird, blocks)
-    CollisionDetection.checkBirdWithPigs(currentBird, pigs)
-    CollisionDetection.checkBlocksWithGround(blocks, groundY)
-    CollisionDetection.checkPigsWithGround(pigs, groundY)
+        CollisionDetection.checkBirdWithGround(currentBird, groundY)
+        CollisionDetection.checkBirdWithBlocks(currentBird, blocks)
+        CollisionDetection.checkBirdWithPigs(currentBird, pigs)
+        CollisionDetection.checkBlocksWithGround(blocks, groundY)
+        CollisionDetection.checkPigsWithGround(pigs, groundY)
+        CollisionDetection.checkBlocksWithBlocks(blocks)
+        CollisionDetection.checkPigsWithBlocks(pigs, blocks)
+        CollisionDetection.checkPigsWithPigs(pigs)
 
-    if (physics.isSettled(currentBird, blocks, pigs)) {
-      gameState = 'settling'
+        if (physics.isSettled(currentBird, blocks, pigs, groundY)) {
+          gameState = 'settling'
+        }
+      }
     }
-  }
 
   if (gameState === 'settling') {
-    physics.settleUpdate(blocks, pigs, groundY)
+      physics.settleUpdate(blocks, pigs, groundY)
 
-    const settled = physics.allSettled(blocks, pigs)
-    if (settled) {
-      gameState = 'evaluating'
+      CollisionDetection.checkBlocksWithGround(blocks, groundY)
+      CollisionDetection.checkPigsWithGround(pigs, groundY)
+      CollisionDetection.checkBlocksWithBlocks(blocks)
+      CollisionDetection.checkPigsWithBlocks(pigs, blocks)
+      CollisionDetection.checkPigsWithPigs(pigs)
+
+      const settled = physics.allSettled(blocks, pigs)
+      if (settled) {
+        gameState = 'evaluating'
+      }
     }
-  }
 
   if (gameState === 'evaluating') {
-    const destroyedPigs = pigs.filter(p => !p.alive).length
-    const destroyedBlocks = blocks.filter(b => b.hp <= 0).length
-    score += destroyedPigs * 100 + destroyedBlocks * 10
+    // 只计算本轮新增的破坏，防止重复计分
+    const currentDestroyedPigs = pigs.filter(p => !p.alive).length
+    const currentDestroyedBlocks = blocks.filter(b => b.hp <= 0).length
+    const newPigs = currentDestroyedPigs - lastScoredPigs
+    const newBlocks = currentDestroyedBlocks - lastScoredBlocks
+    score += newPigs * 100 + newBlocks * 10
+    lastScoredPigs = currentDestroyedPigs
+    lastScoredBlocks = currentDestroyedBlocks
 
     const allPigsDead = pigs.every(p => !p.alive)
     const noBirdsLeft = birds.every(b => b.used)
 
     if (allPigsDead) {
       gameState = 'win'
-      setTimeout(() => {
+      winLoseTimeout = setTimeout(() => {
         levelIndex++
         if (levelIndex >= LevelManager.getTotalLevels()) {
           levelIndex = 0
@@ -125,7 +242,7 @@ function update() {
       }, 2000)
     } else if (noBirdsLeft) {
       gameState = 'lose'
-      setTimeout(() => {
+      winLoseTimeout = setTimeout(() => {
         init()
       }, 2000)
     } else {
@@ -144,6 +261,8 @@ function launchBird() {
   launched = true
   gameState = 'flying'
   currentBird.pulling = false
+  lastScoredPigs = pigs.filter(p => !p.alive).length
+  lastScoredBlocks = blocks.filter(b => b.hp <= 0).length
 }
 
 function nextBird() {
@@ -151,15 +270,17 @@ function nextBird() {
   if (next) {
     currentBird = next
     currentBird.active = true
-    currentBird.x = 120
-    currentBird.y = groundY - 45
+    // 所有待用小鸟都放在弹弓上
+    currentBird.x = slingshot.x
+    currentBird.y = slingshot.y + 10
     currentBird.vx = 0
     currentBird.vy = 0
+    currentBird.pulling = false
     launched = false
     gameState = 'aiming'
   } else {
     gameState = 'lose'
-    setTimeout(() => init(), 2000)
+    winLoseTimeout = setTimeout(() => init(), 2000)
   }
 }
 
@@ -182,9 +303,6 @@ function render() {
 
   UI.render(ctx, screenWidth, screenHeight, score, levelIndex, gameState, birds)
 }
-
-const physics = new Physics(screenWidth, screenHeight)
-CollisionDetection.init(screenWidth)
 
 function gameLoop() {
   update()

@@ -7,52 +7,166 @@ class Slingshot {
     this.baseY = y
     this.bandMaxLength = 80
   }
+  
+  drawRoundRect(ctx, x, y, width, height, radius) {
+    ctx.beginPath()
+    ctx.moveTo(x + radius, y)
+    ctx.lineTo(x + width - radius, y)
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius)
+    ctx.lineTo(x + width, y + height - radius)
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height)
+    ctx.lineTo(x + radius, y + height)
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius)
+    ctx.lineTo(x, y + radius)
+    ctx.quadraticCurveTo(x, y, x + radius, y)
+    ctx.closePath()
+  }
 
   render(ctx, bird, isAiming) {
     ctx.save()
 
-    ctx.strokeStyle = '#5C3A1E'
-    ctx.lineWidth = 4
-
+    ctx.fillStyle = '#654321'
     ctx.beginPath()
-    ctx.moveTo(this.x, this.baseY)
-    ctx.lineTo(this.forkLeft.x, this.forkLeft.y)
+    ctx.moveTo(this.x - 12, this.baseY + 60)
+    ctx.lineTo(this.x + 12, this.baseY + 60)
+    ctx.lineTo(this.x + 8, this.baseY - 10)
+    ctx.lineTo(this.x - 8, this.baseY - 10)
+    ctx.closePath()
+    ctx.fill()
+    
+    ctx.strokeStyle = '#4A3019'
+    ctx.lineWidth = 2
     ctx.stroke()
 
+    this.drawWoodenArm(ctx, this.x, this.baseY - 10, this.forkLeft.x, this.forkLeft.y)
+    this.drawWoodenArm(ctx, this.x, this.baseY - 10, this.forkRight.x, this.forkRight.y)
+
+    ctx.fillStyle = '#5D4037'
     ctx.beginPath()
-    ctx.moveTo(this.x, this.baseY)
-    ctx.lineTo(this.forkRight.x, this.forkRight.y)
-    ctx.stroke()
+    ctx.arc(this.forkLeft.x, this.forkLeft.y, 8, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(this.forkRight.x, this.forkRight.y, 8, 0, Math.PI * 2)
+    ctx.fill()
 
     if (bird && isAiming) {
-      ctx.strokeStyle = '#8B4513'
-      ctx.lineWidth = 3
-
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      
+      ctx.strokeStyle = '#2C1810'
+      ctx.lineWidth = 10
       ctx.beginPath()
       ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
       ctx.lineTo(bird.x, bird.y)
+      ctx.lineTo(this.forkRight.x, this.forkRight.y)
       ctx.stroke()
-
+      
+      ctx.strokeStyle = '#8B4513'
+      ctx.lineWidth = 6
       ctx.beginPath()
-      ctx.moveTo(this.forkRight.x, this.forkRight.y)
+      ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
       ctx.lineTo(bird.x, bird.y)
+      ctx.lineTo(this.forkRight.x, this.forkRight.y)
       ctx.stroke()
+      
+      ctx.strokeStyle = '#A0522D'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
+      ctx.lineTo(bird.x, bird.y)
+      ctx.lineTo(this.forkRight.x, this.forkRight.y)
+      ctx.stroke()
+      
+      if (bird.pulling) {
+        this.drawTrajectory(ctx, bird)
+      }
     } else if (bird && !bird.active) {
       ctx.strokeStyle = '#8B4513'
-      ctx.lineWidth = 2
+      ctx.lineWidth = 4
+      ctx.lineCap = 'round'
 
       ctx.beginPath()
       ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
-      ctx.lineTo(this.forkLeft.x + 10, this.forkLeft.y + 10)
+      ctx.lineTo(this.forkLeft.x + 8, this.forkLeft.y + 8)
       ctx.stroke()
 
       ctx.beginPath()
       ctx.moveTo(this.forkRight.x, this.forkRight.y)
-      ctx.lineTo(this.forkRight.x - 10, this.forkRight.y + 10)
+      ctx.lineTo(this.forkRight.x - 8, this.forkRight.y + 8)
       ctx.stroke()
     }
 
     ctx.restore()
+  }
+  
+  drawWoodenArm(ctx, x1, y1, x2, y2) {
+    const angle = Math.atan2(y2 - y1, x2 - x1)
+    const width = 10
+    
+    ctx.save()
+    ctx.translate((x1 + x2) / 2, (y1 + y2) / 2)
+    ctx.rotate(angle)
+    
+    const length = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    
+    const gradient = ctx.createLinearGradient(-length/2, -width/2, -length/2, width/2)
+    gradient.addColorStop(0, '#8B5A2B')
+    gradient.addColorStop(0.3, '#A0522D')
+    gradient.addColorStop(0.7, '#8B4513')
+    gradient.addColorStop(1, '#654321')
+    
+    ctx.fillStyle = gradient
+    this.drawRoundRect(ctx, -length/2, -width/2, length, width, 3)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#5D3A1A'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)'
+    ctx.lineWidth = 1
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath()
+      ctx.moveTo(-length/2 + 10 + i * (length/3), -width/2 + 2)
+      ctx.lineTo(-length/2 + 10 + i * (length/3), width/2 - 2)
+      ctx.stroke()
+    }
+    
+    ctx.restore()
+  }
+  
+  drawTrajectory(ctx, bird) {
+    const dx = bird.x - this.x
+    const dy = bird.y - this.y
+    const power = Math.sqrt(dx * dx + dy * dy) * 0.15
+    let vx = -dx * 0.15
+    let vy = -dy * 0.15
+    let px = bird.x
+    let py = bird.y
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'
+    ctx.lineWidth = 2
+    ctx.setLineDash([5, 5])
+    ctx.beginPath()
+    ctx.moveTo(px, py)
+
+    for (let i = 0; i < 40; i++) {
+      vy += 0.4
+      px += vx
+      py += vy
+
+      if (py > 540) break
+
+      ctx.lineTo(px, py)
+    }
+    ctx.stroke()
+    ctx.setLineDash([])
+    
+    // 绘制终点指示器
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'
+    ctx.beginPath()
+    ctx.arc(px, py, 3, 0, Math.PI * 2)
+    ctx.fill()
   }
 }
 
