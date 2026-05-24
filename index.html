@@ -57,6 +57,7 @@
       display: flex;
       gap: 10px;
       z-index: 10;
+      pointer-events: none;
     }
     .gameButton {
       padding: 8px 16px;
@@ -67,6 +68,7 @@
       cursor: pointer;
       transition: all 0.2s ease;
       box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+      pointer-events: auto;
     }
     .gameButton:hover {
       transform: translateY(-2px);
@@ -100,5 +102,18 @@
     </div>
   </div>
   <script type="module" src="js/main-browser.js"></script>
+  <script>
+    // JS 模块加载失败时显示提示
+    window.addEventListener('error', function(e) {
+      var c = document.getElementById('gameCanvas');
+      if (c) {
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('游戏加载失败，请刷新页面重试', c.width / 2, c.height / 2);
+      }
+    });
+  </script>
 </body>
 </html>

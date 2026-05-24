@@ -96,7 +96,7 @@ function update() {
     CollisionDetection.checkBlocksWithGround(blocks, groundY)
     CollisionDetection.checkPigsWithGround(pigs, groundY)
 
-    if (physics.isSettled(currentBird, blocks, pigs)) {
+    if (physics.isSettled(currentBird, blocks, pigs, groundY)) {
       gameState = 'settling'
     }
   }
