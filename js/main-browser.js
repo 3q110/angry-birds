@@ -35,8 +35,8 @@ function resizeCanvas() {
     displayHeight = displayWidth / targetRatio
   }
 
-  // 留一点边距
-  const margin = 4
+  // 留边距，确保按钮和提示文字不超出
+  const margin = 20
   displayWidth = Math.min(displayWidth, window.innerWidth - margin)
   displayHeight = Math.min(displayHeight, window.innerHeight - margin)
 
@@ -149,7 +149,7 @@ function update() {
       const dx = touch.x - slingshot.x
       const dy = touch.y - slingshot.y
       const dist = Math.sqrt(dx * dx + dy * dy)
-      const maxPull = 100
+      const maxPull = 150
       
       let targetX = touch.x
       let targetY = touch.y
@@ -254,7 +254,7 @@ function update() {
 function launchBird() {
   const dx = currentBird.x - slingshot.x
   const dy = currentBird.y - slingshot.y
-  const power = Math.sqrt(dx * dx + dy * dy) * 0.15
+  const power = Math.sqrt(dx * dx + dy * dy) * 0.25
 
   physics.launch(currentBird, dx, dy, power)
   currentBird.used = true

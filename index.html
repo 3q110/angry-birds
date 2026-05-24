@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>愤怒的小鸟 - Angry Birds</title>
   <style>
     * {
@@ -28,6 +28,7 @@
       border: 4px solid #2c3e50;
       border-radius: 12px;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(52, 152, 219, 0.2);
+      overflow: hidden;
     }
     canvas {
       display: block;
@@ -48,6 +49,7 @@
       pointer-events: none;
       z-index: 10;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      white-space: nowrap;
     }
     #buttonContainer {
       position: absolute;
@@ -57,7 +59,6 @@
       display: flex;
       gap: 10px;
       z-index: 10;
-      pointer-events: none;
     }
     .gameButton {
       padding: 8px 16px;
@@ -68,7 +69,6 @@
       cursor: pointer;
       transition: all 0.2s ease;
       box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
-      pointer-events: auto;
     }
     .gameButton:hover {
       transform: translateY(-2px);
@@ -101,19 +101,2267 @@
       <button id="nextBtn" class="gameButton">➡️ 下一关</button>
     </div>
   </div>
-  <script type="module" src="js/main-browser.js"></script>
-  <script>
-    // JS 模块加载失败时显示提示
-    window.addEventListener('error', function(e) {
-      var c = document.getElementById('gameCanvas');
-      if (c) {
-        var ctx = c.getContext('2d');
-        ctx.fillStyle = '#fff';
-        ctx.font = '20px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('游戏加载失败，请刷新页面重试', c.width / 2, c.height / 2);
+<script>
+// ============================================================
+// 物理引擎 - Physics
+// ============================================================
+class Physics {
+  constructor(screenWidth, screenHeight) {
+    this.gravity = 0.15
+    this.friction = 0.998
+    this.groundFriction = 0.7
+    this.bounce = 0.3
+    this.settleThreshold = 0.2
+  }
+
+  reset() {}
+
+  launch(bird, dx, dy, power) {
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist === 0) return
+    const nx = dx / dist
+    const ny = dy / dist
+    bird.vx = -nx * power
+    bird.vy = -ny * power
+  }
+
+  update(bird, blocks, pigs, groundY) {
+    if (bird && bird.used) {
+      bird.vy += this.gravity
+      bird.x += bird.vx
+      bird.y += bird.vy
+      bird.vx *= this.friction
+      bird.vy *= this.friction
+    }
+
+    blocks.forEach(b => {
+      if (b.hp <= 0) return
+      b.vy += this.gravity
+      b.x += b.vx
+      b.y += b.vy
+      b.vx *= this.groundFriction
+      b.vy *= this.groundFriction
+    })
+
+    pigs.forEach(p => {
+      if (!p.alive) return
+      p.vy += this.gravity
+      p.x += p.vx
+      p.y += p.vy
+      p.vx *= this.groundFriction
+      p.vy *= this.groundFriction
+    })
+  }
+
+  isSettled(bird, blocks, pigs, groundY) {
+    if (bird && bird.used) {
+      const speed = Math.sqrt(bird.vx * bird.vx + bird.vy * bird.vy)
+      if (speed > this.settleThreshold * 3) return false
+      const heightAboveGround = groundY - bird.y
+      if (heightAboveGround > 80) return false
+    }
+    for (let b of blocks) {
+      if (b.hp > 0 && (Math.abs(b.vx) > this.settleThreshold ||
+          Math.abs(b.vy) > this.settleThreshold)) return false
+    }
+    for (let p of pigs) {
+      if (p.alive && (Math.abs(p.vx) > this.settleThreshold ||
+          Math.abs(p.vy) > this.settleThreshold)) return false
+    }
+    return true
+  }
+
+  settleUpdate(blocks, pigs, groundY) {
+    blocks.forEach(b => {
+      if (b.hp <= 0) return
+      b.vy += this.gravity
+      b.x += b.vx
+      b.y += b.vy
+      if (b.y + b.h >= groundY) {
+        b.y = groundY - b.h
+        b.vy = 0
+        b.vx *= 0.3
       }
-    });
-  </script>
+      b.vx *= 0.5
+      b.vy *= 0.5
+    })
+    pigs.forEach(p => {
+      if (!p.alive) return
+      p.vy += this.gravity
+      p.x += p.vx
+      p.y += p.vy
+      if (p.y + p.radius >= groundY) {
+        p.y = groundY - p.radius
+        p.vy = 0
+        p.vx *= 0.3
+      }
+      p.vx *= 0.5
+      p.vy *= 0.5
+    })
+  }
+
+  allSettled(blocks, pigs) {
+    const stopped = (obj) => Math.abs(obj.vx) < 0.05 && Math.abs(obj.vy) < 0.05
+    return blocks.every(b => b.hp <= 0 || stopped(b)) &&
+           pigs.every(p => !p.alive || stopped(p))
+  }
+}
+
+// ============================================================
+// 弹弓 - Slingshot
+// ============================================================
+class Slingshot {
+  constructor(x, y, screenWidth, screenHeight) {
+    this.x = x
+    this.y = y
+    this.forkLeft = { x: x - 18, y: y - 50 }
+    this.forkRight = { x: x + 18, y: y - 50 }
+    this.baseY = y
+    this.bandMaxLength = 80
+  }
+  
+  drawRoundRect(ctx, x, y, width, height, radius) {
+    ctx.beginPath()
+    ctx.moveTo(x + radius, y)
+    ctx.lineTo(x + width - radius, y)
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius)
+    ctx.lineTo(x + width, y + height - radius)
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height)
+    ctx.lineTo(x + radius, y + height)
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius)
+    ctx.lineTo(x, y + radius)
+    ctx.quadraticCurveTo(x, y, x + radius, y)
+    ctx.closePath()
+  }
+
+  render(ctx, bird, isAiming) {
+    ctx.save()
+
+    ctx.fillStyle = '#654321'
+    ctx.beginPath()
+    ctx.moveTo(this.x - 12, this.baseY + 60)
+    ctx.lineTo(this.x + 12, this.baseY + 60)
+    ctx.lineTo(this.x + 8, this.baseY - 10)
+    ctx.lineTo(this.x - 8, this.baseY - 10)
+    ctx.closePath()
+    ctx.fill()
+    
+    ctx.strokeStyle = '#4A3019'
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    this.drawWoodenArm(ctx, this.x, this.baseY - 10, this.forkLeft.x, this.forkLeft.y)
+    this.drawWoodenArm(ctx, this.x, this.baseY - 10, this.forkRight.x, this.forkRight.y)
+
+    ctx.fillStyle = '#5D4037'
+    ctx.beginPath()
+    ctx.arc(this.forkLeft.x, this.forkLeft.y, 8, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(this.forkRight.x, this.forkRight.y, 8, 0, Math.PI * 2)
+    ctx.fill()
+
+    if (bird && isAiming) {
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      
+      ctx.strokeStyle = '#2C1810'
+      ctx.lineWidth = 10
+      ctx.beginPath()
+      ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
+      ctx.lineTo(bird.x, bird.y)
+      ctx.lineTo(this.forkRight.x, this.forkRight.y)
+      ctx.stroke()
+      
+      ctx.strokeStyle = '#8B4513'
+      ctx.lineWidth = 6
+      ctx.beginPath()
+      ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
+      ctx.lineTo(bird.x, bird.y)
+      ctx.lineTo(this.forkRight.x, this.forkRight.y)
+      ctx.stroke()
+      
+      ctx.strokeStyle = '#A0522D'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
+      ctx.lineTo(bird.x, bird.y)
+      ctx.lineTo(this.forkRight.x, this.forkRight.y)
+      ctx.stroke()
+      
+      if (bird.pulling) {
+        this.drawTrajectory(ctx, bird)
+      }
+    } else if (bird && !bird.active) {
+      ctx.strokeStyle = '#8B4513'
+      ctx.lineWidth = 4
+      ctx.lineCap = 'round'
+
+      ctx.beginPath()
+      ctx.moveTo(this.forkLeft.x, this.forkLeft.y)
+      ctx.lineTo(this.forkLeft.x + 8, this.forkLeft.y + 8)
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(this.forkRight.x, this.forkRight.y)
+      ctx.lineTo(this.forkRight.x - 8, this.forkRight.y + 8)
+      ctx.stroke()
+    }
+
+    ctx.restore()
+  }
+  
+  drawWoodenArm(ctx, x1, y1, x2, y2) {
+    const angle = Math.atan2(y2 - y1, x2 - x1)
+    const width = 10
+    
+    ctx.save()
+    ctx.translate((x1 + x2) / 2, (y1 + y2) / 2)
+    ctx.rotate(angle)
+    
+    const length = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    
+    const gradient = ctx.createLinearGradient(-length/2, -width/2, -length/2, width/2)
+    gradient.addColorStop(0, '#8B5A2B')
+    gradient.addColorStop(0.3, '#A0522D')
+    gradient.addColorStop(0.7, '#8B4513')
+    gradient.addColorStop(1, '#654321')
+    
+    ctx.fillStyle = gradient
+    this.drawRoundRect(ctx, -length/2, -width/2, length, width, 3)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#5D3A1A'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)'
+    ctx.lineWidth = 1
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath()
+      ctx.moveTo(-length/2 + 10 + i * (length/3), -width/2 + 2)
+      ctx.lineTo(-length/2 + 10 + i * (length/3), width/2 - 2)
+      ctx.stroke()
+    }
+    
+    ctx.restore()
+  }
+  
+  drawTrajectory(ctx, bird) {
+    const dx = bird.x - this.x
+    const dy = bird.y - this.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist === 0) return
+    
+    const power = dist * 0.25
+    const nx = dx / dist
+    const ny = dy / dist
+    let vx = -nx * power
+    let vy = -ny * power
+    
+    let px = bird.x
+    let py = bird.y
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)'
+    ctx.lineWidth = 3
+    ctx.setLineDash([8, 4])
+    ctx.beginPath()
+    ctx.moveTo(px, py)
+
+    const gravity = 0.15
+    const friction = 0.998
+    const groundY = 540
+
+    for (let i = 0; i < 200; i++) {
+      vy += gravity
+      vx *= friction
+      vy *= friction
+      px += vx
+      py += vy
+
+      if (py > groundY) break
+      if (px > 950) break
+
+      if (i % 2 === 0) {
+        ctx.lineTo(px, py)
+      }
+    }
+    ctx.stroke()
+    ctx.setLineDash([])
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
+    ctx.beginPath()
+    ctx.arc(px, py, 4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(255, 200, 100, 0.8)'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+}
+
+// ============================================================
+// 小鸟 - Bird
+// ============================================================
+class Bird {
+  constructor(x, y, radius, index) {
+    this.x = x
+    this.y = y
+    this.radius = radius
+    this.vx = 0
+    this.vy = 0
+    this.index = index
+    this.active = false
+    this.used = false
+    this.pulling = false
+    this.colors = ['#E74C3C', '#3498DB', '#F1C40F', '#2ECC71', '#E67E22']
+    this.color = this.colors[index % this.colors.length]
+    this.rotation = 0
+  }
+
+  render(ctx) {
+    if (!this.active && !this.used) return
+    if (this.used && (this.y > 700 || this.x < -100 || this.x > 1000)) return
+
+    ctx.save()
+    ctx.translate(this.x, this.y)
+    
+    if (this.pulling) {
+    } else if (this.active && this.used) {
+      const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy)
+      this.rotation = Math.atan2(this.vy, this.vx) + Math.PI
+      ctx.rotate(this.rotation)
+    }
+
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.radius)
+    gradient.addColorStop(0, this.lightenColor(this.color, 30))
+    gradient.addColorStop(0.7, this.color)
+    gradient.addColorStop(1, this.darkenColor(this.color, 20))
+    
+    ctx.fillStyle = gradient
+    ctx.beginPath()
+    ctx.arc(0, 0, this.radius, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.strokeStyle = this.darkenColor(this.color, 30)
+    ctx.lineWidth = 3
+    ctx.stroke()
+
+    ctx.fillStyle = '#2C3E50'
+    ctx.beginPath()
+    ctx.ellipse(-this.radius - 2, -4, 10, 7, -0.3, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(this.radius + 2, -4, 10, 7, 0.3, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.fillStyle = 'white'
+    ctx.beginPath()
+    ctx.ellipse(-7, -4, 7, 8, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(7, -4, 7, 8, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.fillStyle = '#222'
+    ctx.beginPath()
+    ctx.arc(-5, -3, 3.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(9, -3, 3.5, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.fillStyle = 'white'
+    ctx.beginPath()
+    ctx.arc(-4, -5, 1.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(10, -5, 1.5, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.fillStyle = '#F39C12'
+    ctx.beginPath()
+    ctx.moveTo(-3, 4)
+    ctx.lineTo(5, 4)
+    ctx.lineTo(2, 11)
+    ctx.closePath()
+    ctx.fill()
+    
+    ctx.fillStyle = '#E67E22'
+    ctx.beginPath()
+    ctx.moveTo(-1, 5)
+    ctx.lineTo(3, 5)
+    ctx.lineTo(1, 9)
+    ctx.closePath()
+    ctx.fill()
+
+    ctx.strokeStyle = '#222'
+    ctx.lineWidth = 2
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    if (this.pulling) {
+      ctx.moveTo(-10, 8)
+      ctx.quadraticCurveTo(0, 14, 10, 8)
+    } else {
+      ctx.moveTo(-8, 7)
+      ctx.lineTo(8, 7)
+    }
+    ctx.stroke()
+
+    if (this.pulling) {
+      ctx.fillStyle = 'rgba(255, 107, 107, 0.6)'
+      ctx.beginPath()
+      ctx.ellipse(-12, 5, 4, 3, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.beginPath()
+      ctx.ellipse(12, 5, 4, 3, 0, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    ctx.restore()
+  }
+  
+  lightenColor(color, percent) {
+    const num = parseInt(color.replace('#', ''), 16)
+    const amt = Math.round(2.55 * percent)
+    const R = (num >> 16) + amt
+    const G = (num >> 8 & 0x00FF) + amt
+    const B = (num & 0x0000FF) + amt
+    return '#' + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+      (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+      (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1)
+  }
+  
+  darkenColor(color, percent) {
+    const num = parseInt(color.replace('#', ''), 16)
+    const amt = Math.round(2.55 * percent)
+    const R = (num >> 16) - amt
+    const G = (num >> 8 & 0x00FF) - amt
+    const B = (num & 0x0000FF) - amt
+    return '#' + (0x1000000 + (R > 0 ? R : 0) * 0x10000 +
+      (G > 0 ? G : 0) * 0x100 +
+      (B > 0 ? B : 0)).toString(16).slice(1)
+  }
+}
+
+// ============================================================
+// 关卡管理器 - LevelManager
+// ============================================================
+class LevelManager {
+  static getTotalLevels() {
+    return 5
+  }
+
+  static getLevel(index) {
+    const levels = [
+      this.level1(),
+      this.level2(),
+      this.level3(),
+      this.level4(),
+      this.level5(),
+    ]
+    return levels[index % levels.length]
+  }
+
+  static level1() {
+    return {
+      birds: [
+        { x: 120, y: 435 },
+        { x: 80, y: 440 },
+        { x: 40, y: 440 },
+      ],
+      blocks: [
+        { x: 520, y: 420, w: 80, h: 20, type: 'wood' },
+        { x: 520, y: 370, w: 80, h: 20, type: 'wood' },
+        { x: 540, y: 320, w: 20, h: 50, type: 'wood' },
+        { x: 580, y: 320, w: 20, h: 50, type: 'wood' },
+      ],
+      pigs: [
+        { x: 560, y: 340, radius: 16 },
+      ],
+    }
+  }
+
+  static level2() {
+    return {
+      birds: [
+        { x: 120, y: 435 },
+        { x: 80, y: 440 },
+        { x: 40, y: 440 },
+        { x: 0, y: 440 },
+      ],
+      blocks: [
+        { x: 480, y: 420, w: 20, h: 80, type: 'ice' },
+        { x: 500, y: 370, w: 100, h: 20, type: 'ice' },
+        { x: 500, y: 320, w: 20, h: 50, type: 'wood' },
+        { x: 580, y: 320, w: 20, h: 50, type: 'wood' },
+        { x: 580, y: 420, w: 20, h: 80, type: 'ice' },
+      ],
+      pigs: [
+        { x: 520, y: 340, radius: 15 },
+        { x: 570, y: 395, radius: 14 },
+      ],
+    }
+  }
+
+  static level3() {
+    return {
+      birds: [
+        { x: 120, y: 435 },
+        { x: 80, y: 440 },
+        { x: 40, y: 440 },
+        { x: 0, y: 440 },
+      ],
+      blocks: [
+        { x: 460, y: 420, w: 20, h: 80, type: 'stone' },
+        { x: 460, y: 350, w: 100, h: 20, type: 'wood' },
+        { x: 540, y: 350, w: 20, h: 70, type: 'wood' },
+        { x: 480, y: 290, w: 80, h: 20, type: 'ice' },
+        { x: 580, y: 420, w: 20, h: 80, type: 'stone' },
+        { x: 620, y: 370, w: 60, h: 20, type: 'wood' },
+      ],
+      pigs: [
+        { x: 500, y: 310, radius: 15 },
+        { x: 560, y: 395, radius: 14 },
+        { x: 640, y: 345, radius: 14 },
+      ],
+    }
+  }
+
+  static level4() {
+    return {
+      birds: [
+        { x: 120, y: 435 },
+        { x: 80, y: 440 },
+        { x: 40, y: 440 },
+        { x: 0, y: 440 },
+        { x: -40, y: 440 },
+      ],
+      blocks: [
+        { x: 440, y: 420, w: 20, h: 80, type: 'stone' },
+        { x: 460, y: 370, w: 80, h: 20, type: 'stone' },
+        { x: 520, y: 370, w: 20, h: 70, type: 'ice' },
+        { x: 460, y: 310, w: 80, h: 20, type: 'wood' },
+        { x: 600, y: 420, w: 20, h: 80, type: 'wood' },
+        { x: 620, y: 370, w: 80, h: 20, type: 'wood' },
+        { x: 680, y: 370, w: 20, h: 70, type: 'wood' },
+        { x: 620, y: 310, w: 80, h: 20, type: 'ice' },
+        { x: 660, y: 260, w: 20, h: 50, type: 'ice' },
+      ],
+      pigs: [
+        { x: 480, y: 330, radius: 14 },
+        { x: 540, y: 345, radius: 14 },
+        { x: 640, y: 330, radius: 14 },
+        { x: 670, y: 275, radius: 13 },
+      ],
+    }
+  }
+
+  static level5() {
+    return {
+      birds: [
+        { x: 120, y: 435 },
+        { x: 80, y: 440 },
+        { x: 40, y: 440 },
+        { x: 0, y: 440 },
+        { x: -40, y: 440 },
+      ],
+      blocks: [
+        { x: 430, y: 420, w: 20, h: 80, type: 'stone' },
+        { x: 450, y: 370, w: 80, h: 20, type: 'stone' },
+        { x: 510, y: 370, w: 20, h: 70, type: 'stone' },
+        { x: 450, y: 310, w: 80, h: 20, type: 'wood' },
+        { x: 490, y: 260, w: 20, h: 50, type: 'ice' },
+        { x: 590, y: 420, w: 20, h: 80, type: 'stone' },
+        { x: 610, y: 370, w: 80, h: 20, type: 'stone' },
+        { x: 670, y: 370, w: 20, h: 70, type: 'ice' },
+        { x: 610, y: 310, w: 80, h: 20, type: 'wood' },
+        { x: 650, y: 260, w: 20, h: 50, type: 'ice' },
+        { x: 550, y: 230, w: 100, h: 20, type: 'wood' },
+      ],
+      pigs: [
+        { x: 470, y: 330, radius: 14 },
+        { x: 530, y: 345, radius: 14 },
+        { x: 510, y: 270, radius: 12 },
+        { x: 630, y: 330, radius: 14 },
+        { x: 690, y: 345, radius: 14 },
+      ],
+    }
+  }
+}
+
+// ============================================================
+// 方块 - Block
+// ============================================================
+class Block {
+  constructor(x, y, w, h, type) {
+    this.x = x
+    this.y = y
+    this.w = w
+    this.h = h
+    this.type = type
+    this.vx = 0
+    this.vy = 0
+    this.hp = this.getMaxHp()
+    this.maxHp = this.getMaxHp()
+    this.onGround = false
+    this.stoneSpots = []
+    if (type === 'stone') {
+      for (let i = 0; i < 5; i++) {
+        this.stoneSpots.push({
+          rx: 5 + Math.random() * (w - 15),
+          ry: 5 + Math.random() * (h - 15),
+          rw: 4 + Math.random() * 8,
+          rh: 4 + Math.random() * 8
+        })
+      }
+    }
+  }
+
+  getMaxHp() {
+    switch (this.type) {
+      case 'wood': return 30
+      case 'ice': return 20
+      case 'stone': return 60
+      default: return 30
+    }
+  }
+  
+  drawRoundRect(ctx, x, y, width, height, radius) {
+    ctx.beginPath()
+    ctx.moveTo(x + radius, y)
+    ctx.lineTo(x + width - radius, y)
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius)
+    ctx.lineTo(x + width, y + height - radius)
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height)
+    ctx.lineTo(x + radius, y + height)
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius)
+    ctx.lineTo(x, y + radius)
+    ctx.quadraticCurveTo(x, y, x + radius, y)
+    ctx.closePath()
+  }
+
+  render(ctx) {
+    if (this.hp <= 0) return
+
+    ctx.save()
+    
+    const ratio = this.hp / this.maxHp
+    
+    if (this.type === 'wood') {
+      this.renderWood(ctx, ratio)
+    } else if (this.type === 'ice') {
+      this.renderIce(ctx, ratio)
+    } else if (this.type === 'stone') {
+      this.renderStone(ctx, ratio)
+    }
+    
+    if (this.hp < this.maxHp * 0.7) {
+      this.drawCracks(ctx)
+    }
+
+    ctx.restore()
+  }
+  
+  renderWood(ctx, ratio) {
+    const gradient = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h)
+    if (ratio > 0.6) {
+      gradient.addColorStop(0, '#A67C52')
+      gradient.addColorStop(0.5, '#8B5A2B')
+      gradient.addColorStop(1, '#6B4423')
+    } else if (ratio > 0.3) {
+      gradient.addColorStop(0, '#8B5A2B')
+      gradient.addColorStop(0.5, '#704214')
+      gradient.addColorStop(1, '#5C3317')
+    } else {
+      gradient.addColorStop(0, '#704214')
+      gradient.addColorStop(0.5, '#5C3317')
+      gradient.addColorStop(1, '#4A2810')
+    }
+    
+    ctx.fillStyle = gradient
+    this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 3)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#4A2810'
+    ctx.lineWidth = 3
+    this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 3)
+    ctx.stroke()
+    
+    ctx.strokeStyle = 'rgba(74, 40, 16, 0.3)'
+    ctx.lineWidth = 2
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath()
+      const yOffset = this.y + this.h * (i + 0.5) / 4
+      ctx.moveTo(this.x + 5, yOffset)
+      for (let j = 0; j < this.w - 10; j += 10) {
+        ctx.quadraticCurveTo(
+          this.x + 5 + j + 5, yOffset + (Math.sin(j * 0.1) * 2),
+          this.x + 5 + j + 10, yOffset
+        )
+      }
+      ctx.stroke()
+    }
+  }
+  
+  renderIce(ctx, ratio) {
+    const gradient = ctx.createLinearGradient(this.x, this.y, this.x + this.w, this.y + this.h)
+    if (ratio > 0.6) {
+      gradient.addColorStop(0, 'rgba(173, 216, 230, 0.9)')
+      gradient.addColorStop(0.5, 'rgba(135, 206, 235, 0.9)')
+      gradient.addColorStop(1, 'rgba(100, 149, 237, 0.9)')
+    } else if (ratio > 0.3) {
+      gradient.addColorStop(0, 'rgba(135, 206, 235, 0.9)')
+      gradient.addColorStop(0.5, 'rgba(100, 149, 237, 0.9)')
+      gradient.addColorStop(1, 'rgba(70, 130, 180, 0.9)')
+    } else {
+      gradient.addColorStop(0, 'rgba(100, 149, 237, 0.9)')
+      gradient.addColorStop(0.5, 'rgba(70, 130, 180, 0.9)')
+      gradient.addColorStop(1, 'rgba(50, 100, 150, 0.9)')
+    }
+    
+    ctx.fillStyle = gradient
+    this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 4)
+    ctx.fill()
+    
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
+    ctx.lineWidth = 2
+    this.drawRoundRect(ctx, this.x + 2, this.y + 2, this.w - 4, this.h - 4, 2)
+    ctx.stroke()
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)'
+    ctx.beginPath()
+    ctx.moveTo(this.x + this.w * 0.2, this.y + 5)
+    ctx.lineTo(this.x + this.w * 0.35, this.y + 5)
+    ctx.lineTo(this.x + this.w * 0.25, this.y + 15)
+    ctx.closePath()
+    ctx.fill()
+    
+    ctx.beginPath()
+    ctx.arc(this.x + this.w * 0.7, this.y + this.h * 0.6, 6, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.strokeStyle = 'rgba(30, 144, 255, 0.5)'
+    ctx.lineWidth = 3
+    this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 4)
+    ctx.stroke()
+  }
+  
+  renderStone(ctx, ratio) {
+    const gradient = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h)
+    if (ratio > 0.6) {
+      gradient.addColorStop(0, '#95A5A6')
+      gradient.addColorStop(0.3, '#7F8C8D')
+      gradient.addColorStop(0.7, '#6C7A7B')
+      gradient.addColorStop(1, '#5D6D7E')
+    } else if (ratio > 0.3) {
+      gradient.addColorStop(0, '#7F8C8D')
+      gradient.addColorStop(0.3, '#6C7A7B')
+      gradient.addColorStop(0.7, '#5D6D7E')
+      gradient.addColorStop(1, '#4A5568')
+    } else {
+      gradient.addColorStop(0, '#6C7A7B')
+      gradient.addColorStop(0.3, '#5D6D7E')
+      gradient.addColorStop(0.7, '#4A5568')
+      gradient.addColorStop(1, '#3D4852')
+    }
+    
+    ctx.fillStyle = gradient
+    this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 2)
+    ctx.fill()
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)'
+    for (let i = 0; i < this.stoneSpots.length; i++) {
+      const spot = this.stoneSpots[i]
+      this.drawRoundRect(ctx, this.x + spot.rx, this.y + spot.ry, spot.rw, spot.rh, 1)
+      ctx.fill()
+    }
+    
+    ctx.strokeStyle = '#2C3E50'
+    ctx.lineWidth = 3
+    this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 2)
+    ctx.stroke()
+  }
+  
+  drawCracks(ctx) {
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)'
+    ctx.lineWidth = 2
+    ctx.lineCap = 'round'
+    
+    const cracks = [
+      [[this.x + this.w * 0.2, this.y + this.h * 0.1], 
+       [this.x + this.w * 0.35, this.y + this.h * 0.4], 
+       [this.x + this.w * 0.25, this.y + this.h * 0.7]],
+      [[this.x + this.w * 0.8, this.y + this.h * 0.2], 
+       [this.x + this.w * 0.7, this.y + this.h * 0.5], 
+       [this.x + this.w * 0.85, this.y + this.h * 0.8]],
+      [[this.x + this.w * 0.5, this.y], 
+       [this.x + this.w * 0.45, this.y + this.h * 0.5], 
+       [this.x + this.w * 0.55, this.y + this.h]]
+    ]
+    
+    const numCracks = this.hp < this.maxHp * 0.3 ? 3 : this.hp < this.maxHp * 0.5 ? 2 : 1
+    
+    for (let i = 0; i < numCracks; i++) {
+      ctx.beginPath()
+      for (let j = 0; j < cracks[i].length; j++) {
+        if (j === 0) {
+          ctx.moveTo(cracks[i][j][0], cracks[i][j][1])
+        } else {
+          ctx.lineTo(cracks[i][j][0], cracks[i][j][1])
+        }
+      }
+      ctx.stroke()
+    }
+  }
+
+  getBounds() {
+    return {
+      left: this.x,
+      right: this.x + this.w,
+      top: this.y,
+      bottom: this.y + this.h
+    }
+  }
+}
+
+// ============================================================
+// 小猪 - Pig
+// ============================================================
+class Pig {
+  constructor(x, y, radius) {
+    this.x = x
+    this.y = y
+    this.radius = radius
+    this.vx = 0
+    this.vy = 0
+    this.alive = true
+    this.hp = 40
+    this.maxHp = 40
+    this.hitTimer = 0
+    this.onGround = false
+  }
+
+  takeDamage(amount) {
+    this.hp -= amount
+    this.hitTimer = 10
+    if (this.hp <= 0) {
+      this.alive = false
+    }
+  }
+
+  render(ctx) {
+    if (!this.alive) return
+
+    ctx.save()
+
+    if (this.hitTimer > 0) {
+      this.hitTimer--
+    }
+
+    const shakeX = this.hitTimer > 0 ? (Math.random() - 0.5) * 4 : 0
+    const shakeY = this.hitTimer > 0 ? (Math.random() - 0.5) * 4 : 0
+    const cx = this.x + shakeX
+    const cy = this.y + shakeY
+    const ratio = this.hp / this.maxHp
+    
+    const bodyGradient = ctx.createRadialGradient(
+      cx - this.radius * 0.3, cy - this.radius * 0.3, 0,
+      cx, cy, this.radius
+    )
+    if (ratio > 0.6) {
+      bodyGradient.addColorStop(0, '#66BB6A')
+      bodyGradient.addColorStop(0.5, '#4CAF50')
+      bodyGradient.addColorStop(1, '#388E3C')
+    } else if (ratio > 0.3) {
+      bodyGradient.addColorStop(0, '#5DBB63')
+      bodyGradient.addColorStop(0.5, '#43A047')
+      bodyGradient.addColorStop(1, '#2E7D32')
+    } else {
+      bodyGradient.addColorStop(0, '#4CAF50')
+      bodyGradient.addColorStop(0.5, '#388E3C')
+      bodyGradient.addColorStop(1, '#2E7D32')
+    }
+    
+    ctx.fillStyle = bodyGradient
+    ctx.beginPath()
+    ctx.arc(cx, cy, this.radius, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#1B5E20'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.arc(cx, cy, this.radius, 0, Math.PI * 2)
+    ctx.stroke()
+    
+    ctx.fillStyle = '#81C784'
+    ctx.beginPath()
+    ctx.ellipse(cx - this.radius * 0.9, cy - this.radius * 0.3, 8, 10, -0.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(cx + this.radius * 0.9, cy - this.radius * 0.3, 8, 10, 0.5, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#388E3C'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.ellipse(cx - this.radius * 0.9, cy - this.radius * 0.3, 8, 10, -0.5, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.ellipse(cx + this.radius * 0.9, cy - this.radius * 0.3, 8, 10, 0.5, 0, Math.PI * 2)
+    ctx.stroke()
+    
+    ctx.fillStyle = 'white'
+    ctx.beginPath()
+    ctx.ellipse(cx - 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(cx + 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#333'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.ellipse(cx - 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.ellipse(cx + 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    
+    ctx.fillStyle = '#222'
+    if (ratio > 0.5) {
+      ctx.beginPath()
+      ctx.arc(cx - 5, cy - 3, 3, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.beginPath()
+      ctx.arc(cx + 7, cy - 3, 3, 0, Math.PI * 2)
+      ctx.fill()
+    } else {
+      ctx.beginPath()
+      ctx.moveTo(cx - 8, cy - 5)
+      ctx.lineTo(cx - 3, cy - 1)
+      ctx.moveTo(cx - 3, cy - 5)
+      ctx.lineTo(cx - 8, cy - 1)
+      ctx.stroke()
+      
+      ctx.beginPath()
+      ctx.moveTo(cx + 4, cy - 5)
+      ctx.lineTo(cx + 9, cy - 1)
+      ctx.moveTo(cx + 9, cy - 5)
+      ctx.lineTo(cx + 4, cy - 1)
+      ctx.stroke()
+    }
+    
+    ctx.fillStyle = 'white'
+    ctx.beginPath()
+    ctx.arc(cx - 4, cy - 5, 1.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(cx + 8, cy - 5, 1.5, 0, Math.PI * 2)
+    ctx.fill()
+    
+    const snoutGradient = ctx.createRadialGradient(cx, cy + 3, 0, cx, cy + 3, 6)
+    snoutGradient.addColorStop(0, '#F0B27A')
+    snoutGradient.addColorStop(1, '#E59866')
+    ctx.fillStyle = snoutGradient
+    ctx.beginPath()
+    ctx.ellipse(cx, cy + 3, 7, 5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#D35400'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.ellipse(cx, cy + 3, 7, 5, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    
+    ctx.fillStyle = '#A04000'
+    ctx.beginPath()
+    ctx.ellipse(cx - 2.5, cy + 3, 1.5, 2, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(cx + 2.5, cy + 3, 1.5, 2, 0, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.strokeStyle = '#1B5E20'
+    ctx.lineWidth = 2
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    if (ratio > 0.5) {
+      ctx.moveTo(cx - 4, cy + 10)
+      ctx.quadraticCurveTo(cx, cy + 13, cx + 4, cy + 10)
+    } else {
+      ctx.moveTo(cx - 5, cy + 9)
+      ctx.quadraticCurveTo(cx, cy + 14, cx + 5, cy + 9)
+    }
+    ctx.stroke()
+    
+    if (this.hp < this.maxHp * 0.7) {
+      ctx.fillStyle = 'rgba(244, 67, 54, 0.3)'
+      ctx.beginPath()
+      ctx.arc(cx, cy, this.radius, 0, Math.PI * 2)
+      ctx.fill()
+      
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(cx - this.radius * 0.3, cy - this.radius * 0.5)
+      ctx.lineTo(cx + this.radius * 0.1, cy)
+      ctx.lineTo(cx - this.radius * 0.2, cy + this.radius * 0.4)
+      ctx.stroke()
+      
+      ctx.beginPath()
+      ctx.moveTo(cx + this.radius * 0.4, cy - this.radius * 0.3)
+      ctx.lineTo(cx, cy + this.radius * 0.2)
+      ctx.stroke()
+    }
+
+    ctx.restore()
+  }
+
+  getBounds() {
+    return {
+      left: this.x - this.radius,
+      right: this.x + this.radius,
+      top: this.y - this.radius,
+      bottom: this.y + this.radius
+    }
+  }
+}
+
+// ============================================================
+// UI - 用户界面
+// ============================================================
+class UI {
+  static render(ctx, screenWidth, screenHeight, score, levelIndex, gameState, birds) {
+    ctx.save()
+    
+    this.renderTopBar(ctx, screenWidth, score, levelIndex, birds)
+    this.renderRemainingBirds(ctx, birds, screenWidth)
+    
+    if (gameState === 'win') {
+      this.renderWinScreen(ctx, screenWidth, screenHeight)
+    }
+
+    if (gameState === 'lose') {
+      this.renderLoseScreen(ctx, screenWidth, screenHeight)
+    }
+
+    ctx.restore()
+  }
+  
+  static drawRoundRect(ctx, x, y, width, height, radius) {
+    ctx.beginPath()
+    ctx.moveTo(x + radius, y)
+    ctx.lineTo(x + width - radius, y)
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius)
+    ctx.lineTo(x + width, y + height - radius)
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height)
+    ctx.lineTo(x + radius, y + height)
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius)
+    ctx.lineTo(x, y + radius)
+    ctx.quadraticCurveTo(x, y, x + radius, y)
+    ctx.closePath()
+  }
+  
+  static renderTopBar(ctx, screenWidth, score, levelIndex, birds) {
+    const gradient = ctx.createLinearGradient(0, 0, 0, 55)
+    gradient.addColorStop(0, 'rgba(44, 62, 80, 0.98)')
+    gradient.addColorStop(0.5, 'rgba(52, 73, 94, 0.95)')
+    gradient.addColorStop(1, 'rgba(44, 62, 80, 0.9)')
+    ctx.fillStyle = gradient
+    this.drawRoundRect(ctx, 12, 12, screenWidth - 24, 48, 12)
+    ctx.fill()
+    
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'
+    ctx.lineWidth = 2
+    this.drawRoundRect(ctx, 12, 12, screenWidth - 24, 48, 12)
+    ctx.stroke()
+    
+    ctx.fillStyle = '#F1C40F'
+    ctx.shadowColor = 'rgba(241, 196, 15, 0.6)'
+    ctx.shadowBlur = 12
+    ctx.font = 'bold 22px "Arial Black", sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(`⭐ ${score}`, 32, 44)
+    ctx.shadowBlur = 0
+    
+    ctx.fillStyle = '#3498DB'
+    ctx.shadowColor = 'rgba(52, 152, 219, 0.6)'
+    ctx.shadowBlur = 12
+    ctx.font = 'bold 22px "Arial Black", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(`🎮 第 ${levelIndex + 1} 关`, screenWidth / 2, 44)
+    ctx.shadowBlur = 0
+    
+    ctx.fillStyle = '#E74C3C'
+    ctx.shadowColor = 'rgba(231, 76, 60, 0.6)'
+    ctx.shadowBlur = 12
+    ctx.textAlign = 'right'
+    ctx.font = 'bold 20px "Arial Black", sans-serif'
+    const remaining = birds.filter(b => !b.used).length
+    ctx.fillText(`🐦 x ${remaining}`, screenWidth - 32, 44)
+    ctx.shadowBlur = 0
+  }
+  
+  static renderRemainingBirds(ctx, birds, screenWidth) {
+    let x = screenWidth - 105
+    const y = 82
+    const spacing = 32
+    
+    let count = 0
+    for (let i = birds.length - 1; i >= 0; i--) {
+      if (!birds[i].used) {
+        const colors = ['#E74C3C', '#3498DB', '#F1C40F', '#2ECC71', '#E67E22', '#9B59B6']
+        const color = colors[birds[i].index % colors.length]
+        
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)'
+        ctx.beginPath()
+        ctx.arc(x + 2, y + 3, 12, 0, Math.PI * 2)
+        ctx.fill()
+        
+        const gradient = ctx.createRadialGradient(x - 3, y - 3, 0, x, y, 12)
+        gradient.addColorStop(0, this.lightenColor(color, 35))
+        gradient.addColorStop(0.6, color)
+        gradient.addColorStop(1, this.darkenColor(color, 25))
+        
+        ctx.fillStyle = gradient
+        ctx.beginPath()
+        ctx.arc(x, y, 12, 0, Math.PI * 2)
+        ctx.fill()
+        
+        ctx.strokeStyle = this.darkenColor(color, 35)
+        ctx.lineWidth = 2
+        ctx.stroke()
+        
+        x -= spacing
+        count++
+        if (count >= 5) break
+      }
+    }
+  }
+  
+  static renderWinScreen(ctx, screenWidth, screenHeight) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'
+    ctx.fillRect(0, 0, screenWidth, screenHeight)
+    
+    const centerX = screenWidth / 2
+    const centerY = screenHeight / 2
+    
+    ctx.fillStyle = 'rgba(46, 204, 113, 0.3)'
+    ctx.beginPath()
+    ctx.arc(centerX, centerY, 150, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'
+    ctx.beginPath()
+    ctx.arc(centerX, centerY, 120, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.fillStyle = '#2ECC71'
+    ctx.shadowColor = 'rgba(46, 204, 113, 0.8)'
+    ctx.shadowBlur = 20
+    ctx.font = 'bold 56px "Arial Black", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('🎉 恭喜过关! 🎉', centerX, centerY - 20)
+    ctx.shadowBlur = 0
+    
+    ctx.fillStyle = '#F1C40F'
+    ctx.shadowColor = 'rgba(241, 196, 15, 0.6)'
+    ctx.shadowBlur = 15
+    ctx.font = 'bold 28px "Arial Black", sans-serif'
+    ctx.fillText('⭐ 太棒了! ⭐', centerX, centerY + 30)
+    ctx.shadowBlur = 0
+    
+    ctx.fillStyle = '#ECF0F1'
+    ctx.font = '22px Arial, sans-serif'
+    ctx.fillText('准备进入下一关...', centerX, centerY + 70)
+    
+    this.drawConfetti(ctx, screenWidth, screenHeight)
+  }
+  
+  static renderLoseScreen(ctx, screenWidth, screenHeight) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'
+    ctx.fillRect(0, 0, screenWidth, screenHeight)
+    
+    const centerX = screenWidth / 2
+    const centerY = screenHeight / 2
+    
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.3)'
+    ctx.beginPath()
+    ctx.arc(centerX, centerY, 150, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.2)'
+    ctx.beginPath()
+    ctx.arc(centerX, centerY, 120, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.fillStyle = '#E74C3C'
+    ctx.shadowColor = 'rgba(231, 76, 60, 0.8)'
+    ctx.shadowBlur = 20
+    ctx.font = 'bold 56px "Arial Black", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('💥 游戏失败 💥', centerX, centerY - 20)
+    ctx.shadowBlur = 0
+    
+    ctx.fillStyle = '#F39C12'
+    ctx.shadowColor = 'rgba(243, 156, 18, 0.6)'
+    ctx.shadowBlur = 15
+    ctx.font = 'bold 28px "Arial Black", sans-serif'
+    ctx.fillText('😢 再试一次! 😢', centerX, centerY + 30)
+    ctx.shadowBlur = 0
+    
+    ctx.fillStyle = '#ECF0F1'
+    ctx.font = '22px Arial, sans-serif'
+    ctx.fillText('重新开始...', centerX, centerY + 70)
+  }
+  
+  static drawConfetti(ctx, screenWidth, screenHeight) {
+    const colors = ['#E74C3C', '#3498DB', '#F1C40F', '#2ECC71', '#9B59B6', '#E67E22']
+    for (let i = 0; i < 30; i++) {
+      const x = Math.random() * screenWidth
+      const y = Math.random() * screenHeight
+      const size = 4 + Math.random() * 6
+      const color = colors[Math.floor(Math.random() * colors.length)]
+      
+      ctx.fillStyle = color
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.rotate(Math.random() * Math.PI)
+      ctx.fillRect(-size/2, -size/2, size, size)
+      ctx.restore()
+    }
+  }
+  
+  static lightenColor(color, percent) {
+    const num = parseInt(color.replace('#', ''), 16)
+    const amt = Math.round(2.55 * percent)
+    const R = Math.max(0, Math.min(255, (num >> 16) + amt))
+    const G = Math.max(0, Math.min(255, ((num >> 8) & 0xFF) + amt))
+    const B = Math.max(0, Math.min(255, (num & 0xFF) + amt))
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)
+  }
+  
+  static darkenColor(color, percent) {
+    const num = parseInt(color.replace('#', ''), 16)
+    const amt = Math.round(2.55 * percent)
+    const R = Math.max(0, Math.min(255, (num >> 16) - amt))
+    const G = Math.max(0, Math.min(255, ((num >> 8) & 0xFF) - amt))
+    const B = Math.max(0, Math.min(255, (num & 0xFF) - amt))
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)
+  }
+}
+
+// ============================================================
+// 输入管理器 - InputManager
+// ============================================================
+class InputManager {
+  constructor(canvas, logicalWidth, logicalHeight) {
+    this.canvas = canvas
+    this.logicalWidth = logicalWidth
+    this.logicalHeight = logicalHeight
+    this.touchActive = false
+    this.touchX = 0
+    this.touchY = 0
+
+    canvas.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      this.touchActive = true
+      this.updatePosition(e.clientX, e.clientY)
+    })
+
+    canvas.addEventListener('mousemove', (e) => {
+      e.preventDefault()
+      if (this.touchActive) {
+        this.updatePosition(e.clientX, e.clientY)
+      }
+    })
+
+    canvas.addEventListener('mouseup', (e) => {
+      e.preventDefault()
+      this.touchActive = false
+    })
+
+    canvas.addEventListener('mouseleave', (e) => {
+      e.preventDefault()
+      this.touchActive = false
+    })
+
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault()
+      const touch = e.touches[0]
+      this.touchActive = true
+      this.updatePosition(touch.clientX, touch.clientY)
+    })
+
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault()
+      const touch = e.touches[0]
+      this.updatePosition(touch.clientX, touch.clientY)
+    })
+
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault()
+      this.touchActive = false
+    })
+
+    canvas.addEventListener('touchcancel', (e) => {
+      e.preventDefault()
+      this.touchActive = false
+    })
+  }
+
+  updatePosition(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect()
+    const scaleX = this.logicalWidth / rect.width
+    const scaleY = this.logicalHeight / rect.height
+    this.touchX = (clientX - rect.left) * scaleX
+    this.touchY = (clientY - rect.top) * scaleY
+  }
+
+  getTouch() {
+    return {
+      active: this.touchActive,
+      x: this.touchX,
+      y: this.touchY
+    }
+  }
+}
+
+// ============================================================
+// 场景 - Scenes
+// ============================================================
+class Scenes {
+  constructor(screenWidth, screenHeight) {
+    this.width = screenWidth
+    this.height = screenHeight
+    this.clouds = this.generateClouds()
+    this.hills = this.generateHills()
+    this.birds = this.generateBackgroundBirds()
+  }
+
+  generateClouds() {
+    const clouds = []
+    for (let i = 0; i < 7; i++) {
+      clouds.push({
+        x: Math.random() * this.width,
+        y: 25 + Math.random() * 100,
+        w: 70 + Math.random() * 90,
+        h: 28 + Math.random() * 25,
+        speed: 0.15 + Math.random() * 0.25
+      })
+    }
+    return clouds
+  }
+
+  generateHills() {
+    const hills = []
+    for (let i = 0; i < 5; i++) {
+      hills.push({
+        x: i * 220 - 80,
+        w: 180 + Math.random() * 160,
+        h: 60 + Math.random() * 70,
+        shade: 0.6 + Math.random() * 0.4
+      })
+    }
+    return hills
+  }
+  
+  generateBackgroundBirds() {
+    const birds = []
+    for (let i = 0; i < 5; i++) {
+      birds.push({
+        x: Math.random() * this.width,
+        y: 50 + Math.random() * 120,
+        speed: 0.8 + Math.random() * 0.7,
+        amplitude: 8 + Math.random() * 10,
+        frequency: 0.02 + Math.random() * 0.02,
+        phase: Math.random() * Math.PI * 2,
+        size: 8 + Math.random() * 5
+      })
+    }
+    return birds
+  }
+
+  drawBackground(ctx) {
+    const skyGradient = ctx.createLinearGradient(0, 0, 0, this.height)
+    skyGradient.addColorStop(0, '#2980b9')
+    skyGradient.addColorStop(0.2, '#3498db')
+    skyGradient.addColorStop(0.5, '#5dade2')
+    skyGradient.addColorStop(0.8, '#85c1e9')
+    skyGradient.addColorStop(1, '#aed6f1')
+    ctx.fillStyle = skyGradient
+    ctx.fillRect(0, 0, this.width, this.height)
+    
+    const sunGradient = ctx.createRadialGradient(100, 80, 0, 100, 80, 150)
+    sunGradient.addColorStop(0, 'rgba(255, 204, 0, 0.35)')
+    sunGradient.addColorStop(0.5, 'rgba(255, 165, 0, 0.2)')
+    sunGradient.addColorStop(1, 'rgba(255, 165, 0, 0)')
+    ctx.fillStyle = sunGradient
+    ctx.beginPath()
+    ctx.arc(100, 80, 150, 0, Math.PI * 2)
+    ctx.fill()
+    
+    ctx.fillStyle = '#f1c40f'
+    ctx.shadowColor = '#f39c12'
+    ctx.shadowBlur = 25
+    ctx.beginPath()
+    ctx.arc(100, 80, 30, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.shadowBlur = 0
+
+    this.drawClouds(ctx)
+    this.drawBackgroundBirds(ctx)
+    this.drawHills(ctx)
+  }
+
+  drawClouds(ctx) {
+    this.clouds.forEach(cloud => {
+      cloud.x += cloud.speed
+      if (cloud.x > this.width + 120) {
+        cloud.x = -cloud.w - 50
+        cloud.y = 25 + Math.random() * 100
+      }
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.05)'
+      ctx.beginPath()
+      ctx.ellipse(cloud.x + 3, cloud.y + 5, cloud.w / 2, cloud.h / 2, 0, 0, Math.PI * 2)
+      ctx.fill()
+      
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+      ctx.beginPath()
+      ctx.ellipse(cloud.x, cloud.y, cloud.w / 2, cloud.h / 2, 0, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
+      ctx.beginPath()
+      ctx.ellipse(cloud.x - cloud.w * 0.32, cloud.y + cloud.h * 0.18, cloud.w * 0.38, cloud.h * 0.42, 0, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.88)'
+      ctx.beginPath()
+      ctx.ellipse(cloud.x + cloud.w * 0.28, cloud.y + cloud.h * 0.12, cloud.w * 0.33, cloud.h * 0.48, 0, 0, Math.PI * 2)
+      ctx.fill()
+      
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)'
+      ctx.beginPath()
+      ctx.ellipse(cloud.x, cloud.y - cloud.h * 0.15, cloud.w * 0.25, cloud.h * 0.3, 0, 0, Math.PI * 2)
+      ctx.fill()
+    })
+  }
+  
+  drawBackgroundBirds(ctx) {
+    this.birds.forEach(bird => {
+      bird.x += bird.speed
+      bird.phase += 0.1
+      
+      if (bird.x > this.width + 50) {
+        bird.x = -50
+        bird.y = 50 + Math.random() * 120
+        bird.phase = Math.random() * Math.PI * 2
+      }
+      
+      const wingAngle = Math.sin(bird.phase) * 0.5
+      const bob = Math.sin(bird.phase * bird.frequency) * bird.amplitude
+      
+      ctx.save()
+      ctx.translate(bird.x, bird.y + bob)
+      
+      ctx.fillStyle = '#2c3e50'
+      ctx.beginPath()
+      ctx.ellipse(0, 0, bird.size, bird.size * 0.4, 0, 0, Math.PI * 2)
+      ctx.fill()
+      
+      ctx.strokeStyle = '#2c3e50'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.quadraticCurveTo(-bird.size * 0.8, -bird.size * wingAngle, -bird.size * 1.3, 0)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.quadraticCurveTo(bird.size * 0.8, -bird.size * wingAngle, bird.size * 1.3, 0)
+      ctx.stroke()
+      
+      ctx.restore()
+    })
+  }
+
+  drawHills(ctx) {
+    this.hills.forEach((hill, index) => {
+      if (index % 2 === 0) {
+        const color = `rgba(${Math.floor(100 * hill.shade)}, ${Math.floor(150 * hill.shade)}, ${Math.floor(100 * hill.shade)}, 0.6)`
+        ctx.fillStyle = color
+        ctx.beginPath()
+        ctx.ellipse(hill.x + hill.w / 2, this.height - 40, hill.w / 2, hill.h * 0.7, 0, Math.PI, 0)
+        ctx.fill()
+      }
+    })
+    
+    this.hills.forEach((hill, index) => {
+      if (index % 2 === 1) {
+        const color = `rgba(${Math.floor(120 * hill.shade)}, ${Math.floor(200 * hill.shade)}, ${Math.floor(80 * hill.shade)}, 0.8)`
+        ctx.fillStyle = color
+        ctx.beginPath()
+        ctx.ellipse(hill.x + hill.w / 2, this.height - 50, hill.w / 2, hill.h, 0, Math.PI, 0)
+        ctx.fill()
+      }
+    })
+  }
+}
+
+// ============================================================
+// 碰撞检测 - CollisionDetection
+// ============================================================
+class CollisionDetection {
+  static screenWidth = 800
+
+  static init(screenWidth) {
+    CollisionDetection.screenWidth = screenWidth
+  }
+
+  static checkBirdWithGround(bird, groundY) {
+    if (!bird || !bird.used) return
+    const bottom = bird.y + bird.radius
+    if (bottom >= groundY) {
+      bird.y = groundY - bird.radius
+      bird.vy *= -0.3
+      bird.vx *= 0.5
+      if (Math.abs(bird.vy) < 0.5) bird.vy = 0
+    }
+    if (bird.x - bird.radius < 0) {
+      bird.x = bird.radius
+      bird.vx *= -0.5
+    }
+    if (bird.x + bird.radius > CollisionDetection.screenWidth) {
+      bird.x = CollisionDetection.screenWidth - bird.radius
+      bird.vx *= -0.5
+    }
+  }
+
+  static checkBirdWithBlocks(bird, blocks) {
+    if (!bird || !bird.used) return
+    const bx = bird.x
+    const by = bird.y
+    const br = bird.radius
+
+    blocks.forEach(block => {
+      if (block.hp <= 0) return
+
+      const closestX = Math.max(block.x, Math.min(bx, block.x + block.w))
+      const closestY = Math.max(block.y, Math.min(by, block.y + block.h))
+      const dx = bx - closestX
+      const dy = by - closestY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      if (dist < br) {
+        const overlap = br - dist
+        const nx = dist > 0 ? dx / dist : 0
+        const ny = dist > 0 ? dy / dist : -1
+
+        bird.x += nx * overlap
+        bird.y += ny * overlap
+
+        const impactSpeed = Math.abs(bird.vx * nx + bird.vy * ny)
+        const damage = impactSpeed * 3
+
+        const wasAlive = block.hp > 0
+        block.hp -= damage
+        if (block.hp <= 0) {
+          block.hp = 0
+          if (wasAlive) soundManager.playBlockBreak()
+        } else {
+          soundManager.playHitBlock()
+        }
+
+        const pushForce = impactSpeed * 0.8
+        block.vx += nx * pushForce
+        block.vy += ny * pushForce
+
+        bird.vx = -bird.vx * 0.4 + nx * 2
+        bird.vy = -bird.vy * 0.4 + ny * 2
+      }
+    })
+  }
+
+  static checkBirdWithPigs(bird, pigs) {
+    if (!bird || !bird.used) return
+    pigs.forEach(pig => {
+      if (!pig.alive) return
+      const dx = bird.x - pig.x
+      const dy = bird.y - pig.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const minDist = bird.radius + pig.radius
+
+      if (dist < minDist) {
+        const overlap = minDist - dist
+        const nx = dist > 0 ? dx / dist : 0
+        const ny = dist > 0 ? dy / dist : -1
+
+        bird.x += nx * overlap
+        bird.y += ny * overlap
+
+        const impactSpeed = Math.abs(bird.vx * nx + bird.vy * ny)
+        const damage = impactSpeed * 4
+
+        const wasAlive = pig.alive
+        pig.takeDamage(damage)
+        if (!pig.alive && wasAlive) {
+          soundManager.playPigDeath()
+        } else if (impactSpeed > 1) {
+          soundManager.playHitPig()
+        }
+
+        pig.vx += nx * impactSpeed * 0.6
+        pig.vy += ny * impactSpeed * 0.6
+
+        bird.vx = -bird.vx * 0.3 + nx * 1.5
+        bird.vy = -bird.vy * 0.3 + ny * 1.5
+      }
+    })
+  }
+
+  static checkBlocksWithGround(blocks, groundY) {
+    blocks.forEach(block => {
+      if (block.hp <= 0) return
+      if (block.y + block.h >= groundY) {
+        const wasAirborne = !block.onGround
+        block.y = groundY - block.h
+        block.vy *= -0.2
+        block.vx *= 0.4
+        block.onGround = true
+        if (wasAirborne && Math.abs(block.vy) > 1) {
+          const impact = Math.abs(block.vy)
+          block.hp -= impact
+          if (block.hp <= 0) block.hp = 0
+        }
+        if (Math.abs(block.vy) < 0.5) {
+          block.vy = 0
+          block.vx *= 0.3
+        }
+      } else {
+        block.onGround = false
+      }
+    })
+  }
+
+  static checkPigsWithGround(pigs, groundY) {
+    pigs.forEach(pig => {
+      if (!pig.alive) return
+      if (pig.y + pig.radius >= groundY) {
+        const wasAirborne = !pig.onGround
+        pig.y = groundY - pig.radius
+        pig.vy *= -0.2
+        pig.vx *= 0.4
+        pig.onGround = true
+        if (wasAirborne && Math.abs(pig.vy) > 1) {
+          const impact = Math.abs(pig.vy)
+          const wasAlive = pig.alive
+          pig.takeDamage(impact * 2)
+          if (!pig.alive && wasAlive) {
+            soundManager.playPigDeath()
+          } else {
+            soundManager.playHitPig()
+          }
+        }
+        if (Math.abs(pig.vy) < 0.5) {
+          pig.vy = 0
+          pig.vx *= 0.3
+        }
+      } else {
+        pig.onGround = false
+      }
+    })
+  }
+
+  static checkBlocksWithBlocks(blocks) {
+    for (let i = 0; i < blocks.length; i++) {
+      for (let j = i + 1; j < blocks.length; j++) {
+        const b1 = blocks[i]
+        const b2 = blocks[j]
+        
+        if (b1.hp <= 0 || b2.hp <= 0) continue
+
+        const overlapX = Math.max(0, 
+          Math.min(b1.x + b1.w, b2.x + b2.w) - Math.max(b1.x, b2.x))
+        const overlapY = Math.max(0, 
+          Math.min(b1.y + b1.h, b2.y + b2.h) - Math.max(b1.y, b2.y))
+
+        if (overlapX > 0 && overlapY > 0) {
+          if (overlapX < overlapY) {
+            const pushDir = (b1.x + b1.w / 2) < (b2.x + b2.w / 2) ? -1 : 1
+            const totalMass = 2
+            b1.x += pushDir * overlapX / totalMass
+            b2.x -= pushDir * overlapX / totalMass
+            
+            const tempVx = b1.vx
+            b1.vx = b2.vx * 0.5
+            b2.vx = tempVx * 0.5
+          } else {
+            const pushDir = (b1.y + b1.h / 2) < (b2.y + b2.h / 2) ? -1 : 1
+            const totalMass = 2
+            b1.y += pushDir * overlapY / totalMass
+            b2.y -= pushDir * overlapY / totalMass
+            
+            const tempVy = b1.vy
+            b1.vy = b2.vy * 0.5
+            b2.vy = tempVy * 0.5
+          }
+        }
+      }
+    }
+  }
+
+  static checkPigsWithBlocks(pigs, blocks) {
+    pigs.forEach(pig => {
+      if (!pig.alive) return
+      
+      blocks.forEach(block => {
+        if (block.hp <= 0) return
+        
+        const closestX = Math.max(block.x, Math.min(pig.x, block.x + block.w))
+        const closestY = Math.max(block.y, Math.min(pig.y, block.y + block.h))
+        const dx = pig.x - closestX
+        const dy = pig.y - closestY
+        const dist = Math.sqrt(dx * dx + dy * dy)
+
+        if (dist < pig.radius) {
+          const overlap = pig.radius - dist
+          const nx = dist > 0 ? dx / dist : 0
+          const ny = dist > 0 ? dy / dist : -1
+
+          pig.x += nx * overlap
+          pig.y += ny * overlap
+
+          const impactSpeed = Math.sqrt(pig.vx * pig.vx + pig.vy * pig.vy)
+          const pushForce = impactSpeed * 0.5
+          block.vx += nx * pushForce
+          block.vy += ny * pushForce
+
+          pig.vx = -pig.vx * 0.3 + nx * 1
+          pig.vy = -pig.vy * 0.3 + ny * 1
+        }
+      })
+    })
+  }
+
+  static checkPigsWithPigs(pigs) {
+    for (let i = 0; i < pigs.length; i++) {
+      for (let j = i + 1; j < pigs.length; j++) {
+        const p1 = pigs[i]
+        const p2 = pigs[j]
+        
+        if (!p1.alive || !p2.alive) continue
+
+        const dx = p1.x - p2.x
+        const dy = p1.y - p2.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        const minDist = p1.radius + p2.radius
+
+        if (dist < minDist && dist > 0) {
+          const overlap = minDist - dist
+          const nx = dx / dist
+          const ny = dy / dist
+
+          p1.x += nx * overlap / 2
+          p1.y += ny * overlap / 2
+          p2.x -= nx * overlap / 2
+          p2.y -= ny * overlap / 2
+
+          const tempVx = p1.vx
+          const tempVy = p1.vy
+          p1.vx = p2.vx * 0.5
+          p1.vy = p2.vy * 0.5
+          p2.vx = tempVx * 0.5
+          p2.vy = tempVy * 0.5
+        }
+      }
+    }
+  }
+}
+
+// ============================================================
+// 音效管理器 - SoundManager（使用 Web Audio API 合成音效）
+// ============================================================
+class SoundManager {
+  constructor() {
+    this.ctx = null
+    this.enabled = true
+    // AudioContext 必须在用户交互后创建
+    const initAudio = () => {
+      if (!this.ctx) {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)()
+      }
+    }
+    document.addEventListener('click', initAudio, { once: true })
+    document.addEventListener('touchstart', initAudio, { once: true })
+  }
+
+  _ensureContext() {
+    if (!this.ctx) return false
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume()
+    }
+    return true
+  }
+
+  playLaunch() {
+    // 发射：呼啸声 - 白噪声+高通滤波器
+    if (!this._ensureContext()) return
+    const duration = 0.3
+    const sr = this.ctx.sampleRate
+    const len = Math.floor(sr * duration)
+    const buffer = this.ctx.createBuffer(1, len, sr)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < len; i++) {
+      const t = i / sr
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-t * 8) * 0.3
+    }
+    const source = this.ctx.createBufferSource()
+    source.buffer = buffer
+    const filter = this.ctx.createBiquadFilter()
+    filter.type = 'highpass'
+    filter.frequency.setValueAtTime(200, this.ctx.currentTime)
+    filter.frequency.exponentialRampToValueAtTime(2000, this.ctx.currentTime + duration)
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(0.3, this.ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration)
+    source.connect(filter)
+    filter.connect(gain)
+    gain.connect(this.ctx.destination)
+    source.start()
+  }
+
+  playHitPig() {
+    // 击中小猪：吱的一声
+    if (!this._ensureContext()) return
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(600, this.ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.15)
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15)
+    osc.connect(gain)
+    gain.connect(this.ctx.destination)
+    osc.start()
+    osc.stop(this.ctx.currentTime + 0.15)
+  }
+
+  playPigDeath() {
+    // 小猪死亡：痛苦的咕噜声
+    if (!this._ensureContext()) return
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(500, this.ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.4)
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.4)
+    osc.connect(gain)
+    gain.connect(this.ctx.destination)
+    osc.start()
+    osc.stop(this.ctx.currentTime + 0.4)
+  }
+
+  playHitBlock() {
+    // 击中方块：咚
+    if (!this._ensureContext()) return
+    const duration = 0.1
+    const sr = this.ctx.sampleRate
+    const len = Math.floor(sr * duration)
+    const buffer = this.ctx.createBuffer(1, len, sr)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < len; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.1))
+    }
+    const source = this.ctx.createBufferSource()
+    source.buffer = buffer
+    const filter = this.ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = 800
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(0.4, this.ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration)
+    source.connect(filter)
+    filter.connect(gain)
+    gain.connect(this.ctx.destination)
+    source.start()
+  }
+
+  playBlockBreak() {
+    // 方块碎裂：噼啪声
+    if (!this._ensureContext()) return
+    const duration = 0.2
+    const sr = this.ctx.sampleRate
+    const len = Math.floor(sr * duration)
+    const buffer = this.ctx.createBuffer(1, len, sr)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < len; i++) {
+      const t = i / sr
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t / duration, 2) * 0.5
+    }
+    const source = this.ctx.createBufferSource()
+    source.buffer = buffer
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(0.5, this.ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration)
+    source.connect(gain)
+    gain.connect(this.ctx.destination)
+    source.start()
+  }
+
+  playWin() {
+    // 胜利：上行琶音 C5-E5-G5-C6
+    if (!this._ensureContext()) return
+    const notes = [523, 659, 784, 1047]
+    notes.forEach((freq, i) => {
+      const osc = this.ctx.createOscillator()
+      osc.type = 'triangle'
+      osc.frequency.value = freq
+      const gain = this.ctx.createGain()
+      const t = this.ctx.currentTime + i * 0.12
+      gain.gain.setValueAtTime(0, t)
+      gain.gain.linearRampToValueAtTime(0.2, t + 0.05)
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3)
+      osc.connect(gain)
+      gain.connect(this.ctx.destination)
+      osc.start(t)
+      osc.stop(t + 0.3)
+    })
+  }
+
+  playLose() {
+    // 失败：下行音
+    if (!this._ensureContext()) return
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(400, this.ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(80, this.ctx.currentTime + 0.6)
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(0.15, this.ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.6)
+    osc.connect(gain)
+    gain.connect(this.ctx.destination)
+    osc.start()
+    osc.stop(this.ctx.currentTime + 0.6)
+  }
+
+  playSlingshot() {
+    // 弹弓拉伸：橡皮筋声
+    if (!this._ensureContext()) return
+    const osc = this.ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(300, this.ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.08)
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(0.08, this.ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08)
+    osc.connect(gain)
+    gain.connect(this.ctx.destination)
+    osc.start()
+    osc.stop(this.ctx.currentTime + 0.08)
+  }
+}
+
+// ============================================================
+// 游戏主逻辑
+// ============================================================
+const soundManager = new SoundManager()
+const canvas = document.getElementById('gameCanvas')
+const ctx = canvas.getContext('2d')
+const screenWidth = 900
+const screenHeight = 600
+
+canvas.width = screenWidth
+canvas.height = screenHeight
+
+function resizeCanvas() {
+  const container = document.getElementById('gameContainer')
+  const targetRatio = screenWidth / screenHeight
+  const windowRatio = window.innerWidth / window.innerHeight
+
+  let displayWidth, displayHeight
+
+  if (windowRatio > targetRatio) {
+    displayHeight = window.innerHeight
+    displayWidth = displayHeight * targetRatio
+  } else {
+    displayWidth = window.innerWidth
+    displayHeight = displayWidth / targetRatio
+  }
+
+  const margin = 20
+  displayWidth = Math.min(displayWidth, window.innerWidth - margin)
+  displayHeight = Math.min(displayHeight, window.innerHeight - margin)
+
+  canvas.style.width = displayWidth + 'px'
+  canvas.style.height = displayHeight + 'px'
+  container.style.width = displayWidth + 'px'
+  container.style.height = displayHeight + 'px'
+}
+
+resizeCanvas()
+window.addEventListener('resize', resizeCanvas)
+
+const inputManager = new InputManager(canvas, screenWidth, screenHeight)
+
+let slingshot
+let birds = []
+let blocks = []
+let pigs = []
+let currentBird = null
+let launched = false
+let gameState = 'aiming'
+let score = 0
+let levelIndex = 0
+let sceneManager
+let canDrag = false
+let lastScoredPigs = 0
+let lastScoredBlocks = 0
+let winLoseTimeout = null
+
+const physics = new Physics(screenWidth, screenHeight)
+const groundY = screenHeight - 60
+CollisionDetection.init(screenWidth)
+
+const restartBtn = document.getElementById('restartBtn')
+const prevBtn = document.getElementById('prevBtn')
+const nextBtn = document.getElementById('nextBtn')
+
+restartBtn.addEventListener('click', () => {
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
+  init()
+})
+
+prevBtn.addEventListener('click', () => {
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
+  levelIndex--
+  if (levelIndex < 0) {
+    levelIndex = LevelManager.getTotalLevels() - 1
+  }
+  init()
+})
+
+nextBtn.addEventListener('click', () => {
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
+  levelIndex++
+  if (levelIndex >= LevelManager.getTotalLevels()) {
+    levelIndex = 0
+  }
+  init()
+})
+
+function init() {
+  const levelData = LevelManager.getLevel(levelIndex)
+
+  slingshot = new Slingshot(150, groundY - 80, screenWidth, screenHeight)
+
+  birds = levelData.birds.map((pos, i) =>
+    new Bird(pos.x || 120, pos.y || groundY - 45, 22, i)
+  )
+
+  blocks = levelData.blocks.map(b =>
+    new Block(b.x, b.y, b.w, b.h, b.type)
+  )
+
+  pigs = levelData.pigs.map(p =>
+    new Pig(p.x, p.y, p.radius || 18)
+  )
+
+  currentBird = birds[0]
+  birds[0].active = true
+  launched = false
+  gameState = 'aiming'
+
+  sceneManager = new Scenes(screenWidth, screenHeight)
+  physics.reset()
+
+  score = 0
+  lastScoredPigs = 0
+  lastScoredBlocks = 0
+  canDrag = false
+  if (winLoseTimeout) { clearTimeout(winLoseTimeout); winLoseTimeout = null }
+}
+
+function update() {
+  if (gameState === 'aiming') {
+    const touch = inputManager.getTouch()
+    
+    if (touch.active && !currentBird.pulling && !canDrag) {
+      const dx = touch.x - currentBird.x
+      const dy = touch.y - currentBird.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (dist < currentBird.radius * 3) {
+        canDrag = true
+        soundManager.playSlingshot()
+      }
+    }
+    
+    if (touch.active && canDrag) {
+      const dx = touch.x - slingshot.x
+      const dy = touch.y - slingshot.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const maxPull = 150
+      
+      let targetX = touch.x
+      let targetY = touch.y
+      
+      if (targetX > slingshot.x + 30) {
+        targetX = slingshot.x + 30
+      }
+      
+      const finalDx = targetX - slingshot.x
+      const finalDy = targetY - slingshot.y
+      const finalDist = Math.sqrt(finalDx * finalDx + finalDy * finalDy)
+      
+      if (finalDist > maxPull) {
+        const angle = Math.atan2(finalDy, finalDx)
+        targetX = slingshot.x + Math.cos(angle) * maxPull
+        targetY = slingshot.y + Math.sin(angle) * maxPull
+      }
+      
+      currentBird.x = targetX
+      currentBird.y = targetY
+      currentBird.pulling = true
+    } else if (!touch.active && canDrag) {
+      launchBird()
+      canDrag = false
+      currentBird.pulling = false
+    }
+  }
+
+  if (gameState === 'flying' && launched) {
+      if (currentBird.x > screenWidth + 100 || currentBird.x < -100 ||
+          currentBird.y > screenHeight + 100) {
+        gameState = 'settling'
+      } else {
+        physics.update(currentBird, blocks, pigs, groundY)
+
+        CollisionDetection.checkBirdWithGround(currentBird, groundY)
+        CollisionDetection.checkBirdWithBlocks(currentBird, blocks)
+        CollisionDetection.checkBirdWithPigs(currentBird, pigs)
+        CollisionDetection.checkBlocksWithGround(blocks, groundY)
+        CollisionDetection.checkPigsWithGround(pigs, groundY)
+        CollisionDetection.checkBlocksWithBlocks(blocks)
+        CollisionDetection.checkPigsWithBlocks(pigs, blocks)
+        CollisionDetection.checkPigsWithPigs(pigs)
+
+        if (physics.isSettled(currentBird, blocks, pigs, groundY)) {
+          gameState = 'settling'
+        }
+      }
+    }
+
+  if (gameState === 'settling') {
+      physics.settleUpdate(blocks, pigs, groundY)
+
+      CollisionDetection.checkBlocksWithGround(blocks, groundY)
+      CollisionDetection.checkPigsWithGround(pigs, groundY)
+      CollisionDetection.checkBlocksWithBlocks(blocks)
+      CollisionDetection.checkPigsWithBlocks(pigs, blocks)
+      CollisionDetection.checkPigsWithPigs(pigs)
+
+      const settled = physics.allSettled(blocks, pigs)
+      if (settled) {
+        gameState = 'evaluating'
+      }
+    }
+
+  if (gameState === 'evaluating') {
+    const currentDestroyedPigs = pigs.filter(p => !p.alive).length
+    const currentDestroyedBlocks = blocks.filter(b => b.hp <= 0).length
+    const newPigs = currentDestroyedPigs - lastScoredPigs
+    const newBlocks = currentDestroyedBlocks - lastScoredBlocks
+    score += newPigs * 100 + newBlocks * 10
+    lastScoredPigs = currentDestroyedPigs
+    lastScoredBlocks = currentDestroyedBlocks
+
+    const allPigsDead = pigs.every(p => !p.alive)
+    const noBirdsLeft = birds.every(b => b.used)
+
+    if (allPigsDead) {
+      if (gameState !== 'win') soundManager.playWin()
+      gameState = 'win'
+      winLoseTimeout = setTimeout(() => {
+        levelIndex++
+        if (levelIndex >= LevelManager.getTotalLevels()) {
+          levelIndex = 0
+        }
+        init()
+      }, 2000)
+    } else if (noBirdsLeft) {
+      if (gameState !== 'lose') soundManager.playLose()
+      gameState = 'lose'
+      winLoseTimeout = setTimeout(() => {
+        init()
+      }, 2000)
+    } else {
+      nextBird()
+    }
+  }
+}
+
+function launchBird() {
+  soundManager.playLaunch()
+  const dx = currentBird.x - slingshot.x
+  const dy = currentBird.y - slingshot.y
+  const power = Math.sqrt(dx * dx + dy * dy) * 0.25
+
+  physics.launch(currentBird, dx, dy, power)
+  currentBird.used = true
+  launched = true
+  gameState = 'flying'
+  currentBird.pulling = false
+  lastScoredPigs = pigs.filter(p => !p.alive).length
+  lastScoredBlocks = blocks.filter(b => b.hp <= 0).length
+}
+
+function nextBird() {
+  const next = birds.find(b => !b.used)
+  if (next) {
+    currentBird = next
+    currentBird.active = true
+    currentBird.x = slingshot.x
+    currentBird.y = slingshot.y + 10
+    currentBird.vx = 0
+    currentBird.vy = 0
+    currentBird.pulling = false
+    launched = false
+    gameState = 'aiming'
+  } else {
+    gameState = 'lose'
+    winLoseTimeout = setTimeout(() => init(), 2000)
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, screenWidth, screenHeight)
+
+  sceneManager.drawBackground(ctx)
+
+  slingshot.render(ctx, currentBird, gameState === 'aiming')
+
+  blocks.forEach(b => b.render(ctx))
+  pigs.forEach(p => p.render(ctx))
+  birds.forEach(b => b.render(ctx))
+
+  ctx.fillStyle = '#5D8A3C'
+  ctx.fillRect(0, groundY, screenWidth, screenHeight - groundY)
+
+  ctx.fillStyle = '#7EC850'
+  ctx.fillRect(0, groundY, screenWidth, 8)
+
+  UI.render(ctx, screenWidth, screenHeight, score, levelIndex, gameState, birds)
+}
+
+function gameLoop() {
+  update()
+  render()
+  requestAnimationFrame(gameLoop)
+}
+
+init()
+gameLoop()
+</script>
 </body>
 </html>

@@ -138,35 +138,64 @@ class Slingshot {
   drawTrajectory(ctx, bird) {
     const dx = bird.x - this.x
     const dy = bird.y - this.y
-    const power = Math.sqrt(dx * dx + dy * dy) * 0.15
-    let vx = -dx * 0.15
-    let vy = -dy * 0.15
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist === 0) return
+    
+    // 使用与实际发射完全相同的物理参数和计算方式
+    const power = dist * 0.25
+    const nx = dx / dist
+    const ny = dy / dist
+    let vx = -nx * power
+    let vy = -ny * power
+    
+    // 轨迹起点：从小鸟当前位置开始预测
     let px = bird.x
     let py = bird.y
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'
-    ctx.lineWidth = 2
-    ctx.setLineDash([5, 5])
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)'
+    ctx.lineWidth = 3
+    ctx.setLineDash([8, 4])
     ctx.beginPath()
     ctx.moveTo(px, py)
 
-    for (let i = 0; i < 40; i++) {
-      vy += 0.4
+    // 使用与实际游戏相同的物理参数
+    const gravity = 0.15
+    const friction = 0.998
+    const groundY = 540
+
+    // 模拟飞行轨迹（与实际游戏update循环一致）
+    for (let i = 0; i < 200; i++) {
+      // 应用重力
+      vy += gravity
+      // 应用空气阻力
+      vx *= friction
+      vy *= friction
+      // 更新位置
       px += vx
       py += vy
 
-      if (py > 540) break
+      // 地面碰撞检测
+      if (py > groundY) break
+      
+      // 飞出屏幕右侧停止预测
+      if (px > 950) break
 
-      ctx.lineTo(px, py)
+      // 每隔几帧画一个点
+      if (i % 2 === 0) {
+        ctx.lineTo(px, py)
+      }
     }
     ctx.stroke()
     ctx.setLineDash([])
     
-    // 绘制终点指示器
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'
+    // 绘制终点指示器（小圆圈）
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
     ctx.beginPath()
-    ctx.arc(px, py, 3, 0, Math.PI * 2)
+    ctx.arc(px, py, 4, 0, Math.PI * 2)
     ctx.fill()
+    ctx.strokeStyle = 'rgba(255, 200, 100, 0.8)'
+    ctx.lineWidth = 2
+    ctx.stroke()
   }
 }
 

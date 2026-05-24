@@ -1,7 +1,7 @@
 class Physics {
   constructor(screenWidth, screenHeight) {
-    this.gravity = 0.4
-    this.friction = 0.98
+    this.gravity = 0.15
+    this.friction = 0.998
     this.groundFriction = 0.7
     this.bounce = 0.3
     this.settleThreshold = 0.2
