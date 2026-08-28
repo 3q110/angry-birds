@@ -1,0 +1,9 @@
+
+# tool/cache artifacts
+.uploads/
+.pai/
+.swc/
+.codebuddy/
+.playwright-cli/
+__pycache__/
+*.pyc

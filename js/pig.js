@@ -10,6 +10,8 @@ class Pig {
     this.maxHp = 40
     this.hitTimer = 0
     this.onGround = false
+    // 是否被方块支撑（踩在方块顶面）。支撑被击碎后自由落地 → 判死
+    this.onBlock = false
   }
 
   takeDamage(amount) {
@@ -35,133 +37,158 @@ class Pig {
     const cy = this.y + shakeY
     const ratio = this.hp / this.maxHp
     
-    const bodyGradient = ctx.createRadialGradient(
-      cx - this.radius * 0.3, cy - this.radius * 0.3, 0,
-      cx, cy, this.radius
-    )
-    if (ratio > 0.6) {
-      bodyGradient.addColorStop(0, '#66BB6A')
-      bodyGradient.addColorStop(0.5, '#4CAF50')
-      bodyGradient.addColorStop(1, '#388E3C')
-    } else if (ratio > 0.3) {
-      bodyGradient.addColorStop(0, '#5DBB63')
-      bodyGradient.addColorStop(0.5, '#43A047')
-      bodyGradient.addColorStop(1, '#2E7D32')
-    } else {
-      bodyGradient.addColorStop(0, '#4CAF50')
-      bodyGradient.addColorStop(0.5, '#388E3C')
-      bodyGradient.addColorStop(1, '#2E7D32')
-    }
-    
-    ctx.fillStyle = bodyGradient
+    const r = this.radius
+
+    // 头顶大双耳（先画，被身体压住根部）：外耳粉色 + 内耳深粉
+    ctx.fillStyle = '#FF9FBE'
     ctx.beginPath()
-    ctx.arc(cx, cy, this.radius, 0, Math.PI * 2)
-    ctx.fill()
-    
-    ctx.strokeStyle = '#1B5E20'
-    ctx.lineWidth = 3
-    ctx.beginPath()
-    ctx.arc(cx, cy, this.radius, 0, Math.PI * 2)
-    ctx.stroke()
-    
-    ctx.fillStyle = '#81C784'
-    ctx.beginPath()
-    ctx.ellipse(cx - this.radius * 0.9, cy - this.radius * 0.3, 8, 10, -0.5, 0, Math.PI * 2)
+    ctx.ellipse(cx - r * 0.72, cy - r * 0.88, r * 0.42, r * 0.52, -0.45, 0, Math.PI * 2)
     ctx.fill()
     ctx.beginPath()
-    ctx.ellipse(cx + this.radius * 0.9, cy - this.radius * 0.3, 8, 10, 0.5, 0, Math.PI * 2)
+    ctx.ellipse(cx + r * 0.72, cy - r * 0.88, r * 0.42, r * 0.52, 0.45, 0, Math.PI * 2)
     ctx.fill()
-    
-    ctx.strokeStyle = '#388E3C'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.ellipse(cx - this.radius * 0.9, cy - this.radius * 0.3, 8, 10, -0.5, 0, Math.PI * 2)
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.ellipse(cx + this.radius * 0.9, cy - this.radius * 0.3, 8, 10, 0.5, 0, Math.PI * 2)
-    ctx.stroke()
-    
-    ctx.fillStyle = 'white'
-    ctx.beginPath()
-    ctx.ellipse(cx - 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.beginPath()
-    ctx.ellipse(cx + 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
-    ctx.fill()
-    
-    ctx.strokeStyle = '#333'
+    ctx.strokeStyle = '#C2185B'
     ctx.lineWidth = 1.5
     ctx.beginPath()
-    ctx.ellipse(cx - 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
+    ctx.ellipse(cx - r * 0.72, cy - r * 0.88, r * 0.42, r * 0.52, -0.45, 0, Math.PI * 2)
     ctx.stroke()
     ctx.beginPath()
-    ctx.ellipse(cx + 6, cy - 4, 6, 7, 0, 0, Math.PI * 2)
+    ctx.ellipse(cx + r * 0.72, cy - r * 0.88, r * 0.42, r * 0.52, 0.45, 0, Math.PI * 2)
     ctx.stroke()
-    
-    ctx.fillStyle = '#222'
-    if (ratio > 0.5) {
-      ctx.beginPath()
-      ctx.arc(cx - 5, cy - 3, 3, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.beginPath()
-      ctx.arc(cx + 7, cy - 3, 3, 0, Math.PI * 2)
-      ctx.fill()
+    ctx.fillStyle = '#E91E63'
+    ctx.beginPath()
+    ctx.ellipse(cx - r * 0.72, cy - r * 0.86, r * 0.2, r * 0.3, -0.45, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(cx + r * 0.72, cy - r * 0.86, r * 0.2, r * 0.3, 0.45, 0, Math.PI * 2)
+    ctx.fill()
+
+    // 身体：粉色渐变，血越少颜色越暗
+    const bodyGradient = ctx.createRadialGradient(
+      cx - r * 0.35, cy - r * 0.35, 0,
+      cx, cy, r * 1.1
+    )
+    if (ratio > 0.6) {
+      bodyGradient.addColorStop(0, '#FFD3E0')
+      bodyGradient.addColorStop(0.55, '#FF9FBE')
+      bodyGradient.addColorStop(1, '#F06292')
+    } else if (ratio > 0.3) {
+      bodyGradient.addColorStop(0, '#F8AFC6')
+      bodyGradient.addColorStop(0.55, '#F07EA6')
+      bodyGradient.addColorStop(1, '#D95C85')
     } else {
-      ctx.beginPath()
-      ctx.moveTo(cx - 8, cy - 5)
-      ctx.lineTo(cx - 3, cy - 1)
-      ctx.moveTo(cx - 3, cy - 5)
-      ctx.lineTo(cx - 8, cy - 1)
-      ctx.stroke()
-      
-      ctx.beginPath()
-      ctx.moveTo(cx + 4, cy - 5)
-      ctx.lineTo(cx + 9, cy - 1)
-      ctx.moveTo(cx + 9, cy - 5)
-      ctx.lineTo(cx + 4, cy - 1)
-      ctx.stroke()
+      bodyGradient.addColorStop(0, '#EF93AE')
+      bodyGradient.addColorStop(0.55, '#E05C84')
+      bodyGradient.addColorStop(1, '#BE3D69')
     }
-    
+    ctx.fillStyle = bodyGradient
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.strokeStyle = '#AD1457'
+    ctx.lineWidth = 2.5
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.stroke()
+
+    // 脸颊腮红
+    ctx.fillStyle = 'rgba(255, 105, 150, 0.4)'
+    ctx.beginPath()
+    ctx.ellipse(cx - r * 0.68, cy + r * 0.25, r * 0.18, r * 0.12, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(cx + r * 0.68, cy + r * 0.25, r * 0.18, r * 0.12, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // 大圆眼：白底 + 黑瞳 + 高光（血少时变 X 眼）
     ctx.fillStyle = 'white'
     ctx.beginPath()
-    ctx.arc(cx - 4, cy - 5, 1.5, 0, Math.PI * 2)
+    ctx.ellipse(cx - r * 0.42, cy - r * 0.3, r * 0.22, r * 0.26, 0, 0, Math.PI * 2)
     ctx.fill()
     ctx.beginPath()
-    ctx.arc(cx + 8, cy - 5, 1.5, 0, Math.PI * 2)
+    ctx.ellipse(cx + r * 0.42, cy - r * 0.3, r * 0.22, r * 0.26, 0, 0, Math.PI * 2)
     ctx.fill()
-    
-    const snoutGradient = ctx.createRadialGradient(cx, cy + 3, 0, cx, cy + 3, 6)
-    snoutGradient.addColorStop(0, '#F0B27A')
-    snoutGradient.addColorStop(1, '#E59866')
+    ctx.strokeStyle = '#8E1040'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.ellipse(cx - r * 0.42, cy - r * 0.3, r * 0.22, r * 0.26, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.ellipse(cx + r * 0.42, cy - r * 0.3, r * 0.22, r * 0.26, 0, 0, Math.PI * 2)
+    ctx.stroke()
+
+    if (ratio > 0.5) {
+      ctx.fillStyle = '#222'
+      ctx.beginPath()
+      ctx.arc(cx - r * 0.38, cy - r * 0.26, r * 0.11, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.beginPath()
+      ctx.arc(cx + r * 0.46, cy - r * 0.26, r * 0.11, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = 'white'
+      ctx.beginPath()
+      ctx.arc(cx - r * 0.42, cy - r * 0.33, r * 0.05, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.beginPath()
+      ctx.arc(cx + r * 0.42, cy - r * 0.33, r * 0.05, 0, Math.PI * 2)
+      ctx.fill()
+    } else {
+      ctx.strokeStyle = '#222'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(cx - r * 0.5, cy - r * 0.42)
+      ctx.lineTo(cx - r * 0.18, cy - r * 0.14)
+      ctx.moveTo(cx - r * 0.18, cy - r * 0.42)
+      ctx.lineTo(cx - r * 0.5, cy - r * 0.14)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(cx + r * 0.3, cy - r * 0.42)
+      ctx.lineTo(cx + r * 0.62, cy - r * 0.14)
+      ctx.moveTo(cx + r * 0.62, cy - r * 0.42)
+      ctx.lineTo(cx + r * 0.3, cy - r * 0.14)
+      ctx.stroke()
+    }
+
+    // 标志性的粉色大鼻吻：渐变 + 双鼻孔 + 顶部高光
+    const snoutGradient = ctx.createRadialGradient(cx, cy + r * 0.08, r * 0.05, cx, cy + r * 0.12, r * 0.55)
+    snoutGradient.addColorStop(0, '#FF8FB3')
+    snoutGradient.addColorStop(1, '#E84C7E')
     ctx.fillStyle = snoutGradient
     ctx.beginPath()
-    ctx.ellipse(cx, cy + 3, 7, 5, 0, 0, Math.PI * 2)
+    ctx.ellipse(cx, cy + r * 0.12, r * 0.52, r * 0.34, 0, 0, Math.PI * 2)
     ctx.fill()
-    
-    ctx.strokeStyle = '#D35400'
+    ctx.strokeStyle = '#B71C50'
     ctx.lineWidth = 2
     ctx.beginPath()
-    ctx.ellipse(cx, cy + 3, 7, 5, 0, 0, Math.PI * 2)
+    ctx.ellipse(cx, cy + r * 0.12, r * 0.52, r * 0.34, 0, 0, Math.PI * 2)
     ctx.stroke()
-    
-    ctx.fillStyle = '#A04000'
+
+    ctx.fillStyle = '#8E1040'
     ctx.beginPath()
-    ctx.ellipse(cx - 2.5, cy + 3, 1.5, 2, 0, 0, Math.PI * 2)
+    ctx.ellipse(cx - r * 0.18, cy + r * 0.12, r * 0.08, r * 0.13, 0, 0, Math.PI * 2)
     ctx.fill()
     ctx.beginPath()
-    ctx.ellipse(cx + 2.5, cy + 3, 1.5, 2, 0, 0, Math.PI * 2)
+    ctx.ellipse(cx + r * 0.18, cy + r * 0.12, r * 0.08, r * 0.13, 0, 0, Math.PI * 2)
     ctx.fill()
-    
-    ctx.strokeStyle = '#1B5E20'
-    ctx.lineWidth = 2
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(cx, cy + r * 0.12, r * 0.42, -2.6, -1.2)
+    ctx.stroke()
+
+    // 小嘴：健康时微笑，血少时撇嘴
+    ctx.strokeStyle = '#8E1040'
+    ctx.lineWidth = 1.8
     ctx.lineCap = 'round'
     ctx.beginPath()
     if (ratio > 0.5) {
-      ctx.moveTo(cx - 4, cy + 10)
-      ctx.quadraticCurveTo(cx, cy + 13, cx + 4, cy + 10)
+      ctx.moveTo(cx - r * 0.2, cy + r * 0.62)
+      ctx.quadraticCurveTo(cx, cy + r * 0.82, cx + r * 0.2, cy + r * 0.62)
     } else {
-      ctx.moveTo(cx - 5, cy + 9)
-      ctx.quadraticCurveTo(cx, cy + 14, cx + 5, cy + 9)
+      ctx.moveTo(cx - r * 0.22, cy + r * 0.8)
+      ctx.quadraticCurveTo(cx, cy + r * 0.6, cx + r * 0.22, cy + r * 0.8)
     }
     ctx.stroke()
     

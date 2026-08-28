@@ -5,7 +5,6 @@ class Slingshot {
     this.forkLeft = { x: x - 18, y: y - 50 }
     this.forkRight = { x: x + 18, y: y - 50 }
     this.baseY = y
-    this.bandMaxLength = 80
   }
   
   drawRoundRect(ctx, x, y, width, height, radius) {
@@ -141,13 +140,16 @@ class Slingshot {
     const dist = Math.sqrt(dx * dx + dy * dy)
     if (dist === 0) return
     
-    // 使用与实际发射完全相同的物理参数和计算方式
-    const power = dist * 0.25
+    // 使用与实际发射完全相同的物理参数和计算方式：
+    // 功率系数 0.35（与 main-browser 的 launchBird 一致）、
+    // 重力 0.5（与 physics.gravity 一致）、空中无空气阻力（与 physics.update 一致）。
+    // 旧值 0.25/0.15/0.998 会让预测弹道又远又平，照虚线瞄准必然砸不中
+    const power = dist * 0.35
     const nx = dx / dist
     const ny = dy / dist
     let vx = -nx * power
     let vy = -ny * power
-    
+
     // 轨迹起点：从小鸟当前位置开始预测
     let px = bird.x
     let py = bird.y
@@ -158,24 +160,20 @@ class Slingshot {
     ctx.beginPath()
     ctx.moveTo(px, py)
 
-    // 使用与实际游戏相同的物理参数
-    const gravity = 0.15
-    const friction = 0.998
+    // 与实际物理同步的预测参数（修改 physics.js 或 launchBird 时必须同步这里）
+    const gravity = 0.5
     const groundY = 540
 
-    // 模拟飞行轨迹（与实际游戏update循环一致）
-    for (let i = 0; i < 200; i++) {
+    // 模拟飞行轨迹（与 physics.update 的自由落体积分一致）
+    for (let i = 0; i < 300; i++) {
       // 应用重力
       vy += gravity
-      // 应用空气阻力
-      vx *= friction
-      vy *= friction
       // 更新位置
       px += vx
       py += vy
 
       // 地面碰撞检测
-      if (py > groundY) break
+      if (py + bird.radius > groundY) break
       
       // 飞出屏幕右侧停止预测
       if (px > 950) break

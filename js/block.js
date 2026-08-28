@@ -24,12 +24,14 @@ class Block {
     }
   }
 
+  // 血量 = "满攻次数" × 单次满攻伤害（collision.js 中 FULL_HIT_DAMAGE = 10）：
+  // 玻璃 1 次满攻击碎、板材 1.5 次满攻击碎、石头 2 次满攻击碎
   getMaxHp() {
     switch (this.type) {
-      case 'wood': return 30
-      case 'ice': return 20
-      case 'stone': return 60
-      default: return 30
+      case 'glass': return 10
+      case 'board': return 15
+      case 'stone': return 20
+      default: return 15
     }
   }
   
@@ -54,10 +56,10 @@ class Block {
     
     const ratio = this.hp / this.maxHp
     
-    if (this.type === 'wood') {
-      this.renderWood(ctx, ratio)
-    } else if (this.type === 'ice') {
-      this.renderIce(ctx, ratio)
+    if (this.type === 'board') {
+      this.renderBoard(ctx, ratio)
+    } else if (this.type === 'glass') {
+      this.renderGlass(ctx, ratio)
     } else if (this.type === 'stone') {
       this.renderStone(ctx, ratio)
     }
@@ -69,27 +71,27 @@ class Block {
     ctx.restore()
   }
   
-  renderWood(ctx, ratio) {
+  renderBoard(ctx, ratio) {
     const gradient = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h)
     if (ratio > 0.6) {
-      gradient.addColorStop(0, '#A67C52')
-      gradient.addColorStop(0.5, '#8B5A2B')
-      gradient.addColorStop(1, '#6B4423')
+      gradient.addColorStop(0, '#C89058')
+      gradient.addColorStop(0.5, '#A67438')
+      gradient.addColorStop(1, '#82552A')
     } else if (ratio > 0.3) {
-      gradient.addColorStop(0, '#8B5A2B')
-      gradient.addColorStop(0.5, '#704214')
-      gradient.addColorStop(1, '#5C3317')
+      gradient.addColorStop(0, '#A67438')
+      gradient.addColorStop(0.5, '#8A5A2C')
+      gradient.addColorStop(1, '#6E4520')
     } else {
-      gradient.addColorStop(0, '#704214')
-      gradient.addColorStop(0.5, '#5C3317')
-      gradient.addColorStop(1, '#4A2810')
+      gradient.addColorStop(0, '#8A5A2C')
+      gradient.addColorStop(0.5, '#6E4520')
+      gradient.addColorStop(1, '#5C3A1A')
     }
     
     ctx.fillStyle = gradient
     this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 3)
     ctx.fill()
     
-    ctx.strokeStyle = '#4A2810'
+    ctx.strokeStyle = '#5C3A1A'
     ctx.lineWidth = 3
     this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 3)
     ctx.stroke()
@@ -110,7 +112,7 @@ class Block {
     }
   }
   
-  renderIce(ctx, ratio) {
+  renderGlass(ctx, ratio) {
     const gradient = ctx.createLinearGradient(this.x, this.y, this.x + this.w, this.y + this.h)
     if (ratio > 0.6) {
       gradient.addColorStop(0, 'rgba(173, 216, 230, 0.9)')
@@ -156,20 +158,20 @@ class Block {
   renderStone(ctx, ratio) {
     const gradient = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h)
     if (ratio > 0.6) {
-      gradient.addColorStop(0, '#95A5A6')
-      gradient.addColorStop(0.3, '#7F8C8D')
-      gradient.addColorStop(0.7, '#6C7A7B')
-      gradient.addColorStop(1, '#5D6D7E')
+      gradient.addColorStop(0, '#AEBFC4')
+      gradient.addColorStop(0.3, '#97A8AD')
+      gradient.addColorStop(0.7, '#829499')
+      gradient.addColorStop(1, '#6E8087')
     } else if (ratio > 0.3) {
-      gradient.addColorStop(0, '#7F8C8D')
-      gradient.addColorStop(0.3, '#6C7A7B')
-      gradient.addColorStop(0.7, '#5D6D7E')
-      gradient.addColorStop(1, '#4A5568')
+      gradient.addColorStop(0, '#97A8AD')
+      gradient.addColorStop(0.3, '#829499')
+      gradient.addColorStop(0.7, '#6E8087')
+      gradient.addColorStop(1, '#5C6E77')
     } else {
-      gradient.addColorStop(0, '#6C7A7B')
-      gradient.addColorStop(0.3, '#5D6D7E')
-      gradient.addColorStop(0.7, '#4A5568')
-      gradient.addColorStop(1, '#3D4852')
+      gradient.addColorStop(0, '#829499')
+      gradient.addColorStop(0.3, '#6E8087')
+      gradient.addColorStop(0.7, '#5C6E77')
+      gradient.addColorStop(1, '#4C5C66')
     }
     
     ctx.fillStyle = gradient
@@ -183,7 +185,7 @@ class Block {
       ctx.fill()
     }
     
-    ctx.strokeStyle = '#2C3E50'
+    ctx.strokeStyle = '#3E5666'
     ctx.lineWidth = 3
     this.drawRoundRect(ctx, this.x, this.y, this.w, this.h, 2)
     ctx.stroke()
